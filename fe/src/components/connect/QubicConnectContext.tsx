@@ -12,7 +12,8 @@ import { DEFAULT_TX_SIZE } from "@/constants";
 import { toast } from "react-hot-toast";
 import { getSnap } from "./utils/snap";
 import { connectSnap } from "./utils/snap";
-import { QubicVault } from "@qubic-lib/qubic-ts-vault-library";
+// @ts-ignore
+import QubicVault from "@qubic-lib/qubic-ts-vault-library";
 import { useAtom } from "jotai";
 // import { balancesAtom } from "@/store/balances";
 

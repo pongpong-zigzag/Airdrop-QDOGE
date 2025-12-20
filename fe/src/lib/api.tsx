@@ -2,6 +2,7 @@ const BASE = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
 import {User, Res, TransactionRequest} from "./types"
 
+const normalizeWalletId = (walletId: string) => walletId.trim().toUpperCase();
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -20,12 +21,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const getUser = async (walletId: string): Promise<{ user: User; created: boolean }> => {
+  const normalizedWalletId = normalizeWalletId(walletId);
   const res = await fetch(`${BASE}/get_user`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ walletId }),
+    body: JSON.stringify({ walletId: normalizedWalletId }),
   });
 
   if(!res.ok) {
@@ -70,12 +72,13 @@ export const recordTransaction = async (data: TransactionRequest) => {
 };
 
 export const updateAccessInfo = async (walletId: string): Promise<{ user: User }> => {
+  const normalizedWalletId = normalizeWalletId(walletId);
   const response = await fetch(`${BASE}/update_access_info`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ walletId }),
+    body: JSON.stringify({ walletId: normalizedWalletId }),
   });
 
   if (!response.ok) {
@@ -87,12 +90,13 @@ export const updateAccessInfo = async (walletId: string): Promise<{ user: User }
 };
 
 export const updateInvestBalance = async (walletId: string, amount: number): Promise<Res> => {
+  const normalizedWalletId = normalizeWalletId(walletId);
   const response = await fetch(`${BASE}/update_invest_balance`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ walletId, amount }),
+    body: JSON.stringify({ walletId: normalizedWalletId, amount }),
   });
 
   if (!response.ok) {

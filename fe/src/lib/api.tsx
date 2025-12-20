@@ -68,3 +68,37 @@ export const recordTransaction = async (data: TransactionRequest) => {
 
   return response.json() as Promise<{ success: boolean; transaction: { tx_hash: string } }>;
 };
+
+export const updateAccessInfo = async (walletId: string): Promise<{ user: User }> => {
+  const response = await fetch(`${BASE}/update_access_info`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ walletId }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.error || "Failed to update access info");
+  }
+
+  return response.json();
+};
+
+export const updateInvestBalance = async (walletId: string, amount: number): Promise<Res> => {
+  const response = await fetch(`${BASE}/update_invest_balance`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ walletId, amount }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.error || "Failed to update invest balance");
+  }
+
+  return response.json();
+};

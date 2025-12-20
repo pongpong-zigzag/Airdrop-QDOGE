@@ -8,7 +8,7 @@ from contextlib import closing
 from fastapi import FastAPI, HTTPException
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, constr
+from pydantic import BaseModel, constr, confloat
 
 from schema.db import get_conn
 
@@ -40,6 +40,10 @@ class GetUserResponse(BaseModel):
     user: UserResponse
     created: bool
 
+
+class UpdateAccessInfoResponse(BaseModel):
+    user: UserResponse
+
 def _row_to_user(row: sqlite3.Row) -> UserResponse:
     if row is None:
         raise ValueError("Row is required")
@@ -62,6 +66,11 @@ class ResResponse(BaseModel):
 
 class GetAirdropResResponse(BaseModel):
     res: List[ResResponse]
+
+
+class UpdateInvestBalanceRequest(BaseModel):
+    walletId: constr(strip_whitespace=True, min_length=60, max_length=60)
+    amount: confloat(gt=0)
 
 
 def _row_to_res(row: sqlite3.Row) -> ResResponse:
@@ -167,6 +176,73 @@ def get_airdrop_res() -> GetAirdropResResponse:
 
     res_entries = [_row_to_res(row) for row in rows]
     return GetAirdropResResponse(res=res_entries)
+
+
+@app.post("/update_access_info", response_model=UpdateAccessInfoResponse)
+def update_access_info(payload: WalletRequest) -> UpdateAccessInfoResponse:
+    wallet_id = payload.walletId
+
+    with closing(get_conn()) as conn:
+        conn: Connection
+        row = conn.execute(
+            'SELECT no, wallet_id, access_info, role, created_at, updated_at FROM "user" WHERE wallet_id = ?',
+            (wallet_id,),
+        ).fetchone()
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if int(row["access_info"]) == 0:
+            with conn:
+                conn.execute(
+                    'UPDATE "user" SET access_info = 1, updated_at = datetime("now") WHERE wallet_id = ?',
+                    (wallet_id,),
+                )
+
+        updated_row = conn.execute(
+            'SELECT no, wallet_id, access_info, role, created_at, updated_at FROM "user" WHERE wallet_id = ?',
+            (wallet_id,),
+        ).fetchone()
+
+        if updated_row is None:
+            raise HTTPException(status_code=500, detail="Failed to update user access info")
+
+    return UpdateAccessInfoResponse(user=_row_to_user(updated_row))
+
+
+@app.post("/update_invest_balance", response_model=ResResponse)
+def update_invest_balance(payload: UpdateInvestBalanceRequest) -> ResResponse:
+    wallet_id = payload.walletId
+    amount = float(payload.amount)
+
+    with closing(get_conn()) as conn:
+        conn: Connection
+        existing = conn.execute(
+            "SELECT no, wallet_id, qearn_bal, invest_bal, airdrop_amt, created_at, updated_at FROM res WHERE wallet_id = ?",
+            (wallet_id,),
+        ).fetchone()
+
+        with conn:
+            if existing:
+                conn.execute(
+                    "UPDATE res SET invest_bal = invest_bal + ?, updated_at = datetime('now') WHERE wallet_id = ?",
+                    (amount, wallet_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO res (wallet_id, invest_bal) VALUES (?, ?)",
+                    (wallet_id, amount),
+                )
+
+        updated_row = conn.execute(
+            "SELECT no, wallet_id, qearn_bal, invest_bal, airdrop_amt, created_at, updated_at FROM res WHERE wallet_id = ?",
+            (wallet_id,),
+        ).fetchone()
+
+        if updated_row is None:
+            raise HTTPException(status_code=500, detail="Failed to upsert invest balance")
+
+    return _row_to_res(updated_row)
 
 
 @app.post("/transaction", response_model=TransactionCreateResponse)

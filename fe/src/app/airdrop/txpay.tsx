@@ -5,7 +5,8 @@ import { useQubicConnect } from '@/components/connect/QubicConnectContext';
 import { fetchBalance, broadcastTx } from '@/services/rpc.service';
 import { toast } from 'react-hot-toast';
 import { createQubicTx } from '@/lib/transfer';
-import { recordTransaction } from '@/lib/api';
+import { recordTransaction, updateAccessInfo, updateInvestBalance } from '@/lib/api';
+import { useUser } from '@/contexts/UserContext';
 
 interface BuyGamesTransactionProps {
   onPurchaseComplete?: () => void;
@@ -20,6 +21,7 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
   const { connected, wallet, getSignedTx } = useQubicConnect();
   // const { sendQubic } = useWalletConnect();
   const [, setIsProcessing] = useState(false);
+  const { refreshUser } = useUser();
 
   const emitResult = useCallback((event: TransferEventName, status: 'success' | 'error', message?: string) => {
     if (typeof window === "undefined") return;
@@ -31,7 +33,7 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
       if (!connected || !wallet) {
         toast.error('Please connect your wallet first');
         emitResult(eventName, 'error', 'Wallet not connected');
-        return;
+        return false;
       }
 
       setIsProcessing(true);
@@ -46,14 +48,14 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
           const message = `Insufficient balance. You have ${availableBalance} QU, but need ${amount} QU.`;
           toast.error(message);
           emitResult(eventName, 'error', message);
-          return;
+          return false;
         }
 
         if (enforceReserve && availableBalance - amount < QU_MIN_BALANCE) {
           const message = `You need to keep at least ${QU_MIN_BALANCE} QU in your wallet.`;
           toast.error(message);
           emitResult(eventName, 'error', message);
-          return;
+          return false;
         }
 
         toast.success(`Balance: ${availableBalance} QU`, { duration: 2000 });
@@ -91,8 +93,8 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
 
         toast.dismiss('signing');
 
-        emitResult(eventName, 'success');
-        onPurchaseComplete?.();
+        toast.success('Transaction successful');
+        return true;
       } catch (error: unknown) {
         toast.dismiss('balance-check');
         toast.dismiss('signing');
@@ -100,20 +102,49 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
           error instanceof Error ? `Transaction failed: ${error.message}` : 'Transaction failed: Unknown error';
         toast.error(message);
         emitResult(eventName, 'error', message);
+        return false;
       } finally {
         setIsProcessing(false);
       }
     },
-    [connected, wallet, emitResult, onPurchaseComplete, getSignedTx],
+    [connected, wallet, emitResult, getSignedTx],
   );
 
   const handlePayAccess = useCallback(async () => {
-    await runTransfer(ACCESS_PRICE, 'payAccessResult', false);
-  }, [runTransfer]);
+    const transferSuccess = await runTransfer(ACCESS_PRICE, 'payAccessResult', false);
+    if (!transferSuccess || !wallet?.publicKey) {
+      return;
+    }
+
+    try {
+      await updateAccessInfo(wallet.publicKey);
+      await refreshUser();
+      onPurchaseComplete?.();
+      emitResult('payAccessResult', 'success');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to update access info';
+      toast.error(message);
+      emitResult('payAccessResult', 'error', message);
+    }
+    
+  }, [runTransfer, wallet?.publicKey, refreshUser, emitResult, onPurchaseComplete]);
 
   const handlePayFund = useCallback(async (amount: number) => {
-    await runTransfer(amount, 'payFundResult', true);
-  }, [runTransfer]);
+    const transferSuccess = await runTransfer(amount, 'payFundResult', true);
+    if (!transferSuccess || !wallet?.publicKey) {
+      return;
+    }
+
+    try {
+      await updateInvestBalance(wallet.publicKey, amount);
+      onPurchaseComplete?.();
+      emitResult('payFundResult', 'success');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to update invest balance';
+      toast.error(message);
+      emitResult('payFundResult', 'error', message);
+    }
+  }, [runTransfer, wallet?.publicKey, emitResult, onPurchaseComplete]);
 
   // This component listens for buy games requests and leaderboard payment requests
   React.useEffect(() => {

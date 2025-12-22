@@ -5,21 +5,25 @@ import { useQubicConnect } from '@/components/connect/QubicConnectContext';
 import { fetchBalance, broadcastTx } from '@/services/rpc.service';
 import { toast } from 'react-hot-toast';
 import { createQubicTx } from '@/lib/transfer';
-import { recordTransaction, updateAccessInfo, updateInvestBalance } from '@/lib/api';
+import { getInvestBalance, recordTransaction, updateAccessInfo, updateRes } from '@/lib/api';
 import { useUser } from '@/contexts/UserContext';
+import { ownedAssetsAtom } from '@/store/assets';
+import { useAtom } from 'jotai';
+
 
 interface BuyGamesTransactionProps {
   onPurchaseComplete?: () => void;
 }
 
 const ACCESS_PRICE = 100; // 100 QU for airdrop access
-const QU_MIN_BALANCE = 10000;
-const RECIPIENT_ADDRESS = 'KZFJRTYKJXVNPAYXQXUKMPKAHWWBWVWGLSFMEFOKPFJFWEDDXMCZVSPEOOZE'; // QU recipient address
+const QU_MIN_BALANCE = 1000;
+const QU_MAX_BALANCE = 10000000000;
+const RECIPIENT_ADDRESS = process.env.QDOGE_ADDRESS || 'QDOGEEESKYPAICECHEAHOXPULEOADTKGEJHAVYPFKHLEWGXXZQUGIGMBUTZE'; // QU recipient address
 type TransferEventName = 'payFundResult' | 'payAccessResult';
 
 const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
   const { connected, wallet, getSignedTx } = useQubicConnect();
-  // const { sendQubic } = useWalletConnect();
+  const [ownedAssets] = useAtom(ownedAssetsAtom);
   const [, setIsProcessing] = useState(false);
   const { refreshUser } = useUser();
 
@@ -39,6 +43,19 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
       setIsProcessing(true);
 
       try {
+        toast.loading('Checking invest balance...', { id: 'invest-check' });
+        const investData = await getInvestBalance(wallet.publicKey);
+        toast.dismiss('invest-check');
+
+        const currentInvestBalance = investData?.invest_bal ?? 0;
+        console.log(currentInvestBalance);
+        if (currentInvestBalance + amount > QU_MAX_BALANCE) {
+          const message = `Investment limit exceeded. Current invest balance is ${currentInvestBalance} QU, cap is ${QU_MAX_BALANCE} QU.`;
+          toast.error(message);
+          emitResult(eventName, 'error', message);
+          return false;
+        }
+
         toast.loading('Checking balance...', { id: 'balance-check' });
         const balanceData = await fetchBalance(wallet.publicKey);
         const availableBalance = balanceData.balance;
@@ -58,6 +75,8 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
           return false;
         }
 
+        
+
         toast.success(`Balance: ${availableBalance} QU`, { duration: 2000 });
 
         const sourceAddress = wallet.publicKey?.toUpperCase().trim();
@@ -70,7 +89,7 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
         const connectType = wallet.connectType?.toLowerCase();
         let signedTx: Uint8Array;
 
-        if (connectType === 'walletconnect' || connectType === 'mmsnap') {
+        if (connectType === 'walletconnect' || connectType === 'mmSnap') {
           const signed = await getSignedTx(tx);
           signedTx = signed.tx;
         } else if (connectType === 'privatekey') {
@@ -97,6 +116,7 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
         return true;
       } catch (error: unknown) {
         toast.dismiss('balance-check');
+        toast.dismiss('invest-check');
         toast.dismiss('signing');
         const message =
           error instanceof Error ? `Transaction failed: ${error.message}` : 'Transaction failed: Unknown error';
@@ -134,9 +154,9 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
     if (!transferSuccess || !wallet?.publicKey) {
       return;
     }
-
+    const qearnAsset = ownedAssets.find((asset) => asset.asset === 'QEARN');
     try {
-      await updateInvestBalance(wallet.publicKey, amount);
+      await updateRes(wallet.publicKey, qearnAsset?.amount ?? 0, amount);
       onPurchaseComplete?.();
       emitResult('payFundResult', 'success');
     } catch (error: unknown) {
@@ -144,7 +164,7 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
       toast.error(message);
       emitResult('payFundResult', 'error', message);
     }
-  }, [runTransfer, wallet?.publicKey, emitResult, onPurchaseComplete]);
+  }, [ownedAssets, runTransfer, wallet?.publicKey, emitResult, onPurchaseComplete]);
 
   // This component listens for buy games requests and leaderboard payment requests
   React.useEffect(() => {

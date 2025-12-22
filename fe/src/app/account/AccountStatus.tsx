@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useAtom } from "jotai";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchOwnedAssets, fetchBalance } from "@/services/rpc.service";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,7 @@ import { MdAccountBalance } from "react-icons/md";
 import { BiCoinStack } from "react-icons/bi";
 import { RiExchangeFundsFill } from "react-icons/ri";
 import { Balance } from "@/types";
+import { ownedAssetsAtom } from "@/store/assets";
 
 interface AccountStatusProps {
   address: string;
@@ -16,7 +18,7 @@ interface AccountStatusProps {
 
 const AccountStatus: React.FC<AccountStatusProps> = ({ address }) => {
   const [balance, setBalance] = useState<Balance>();
-  const [ownedAssets, setOwnedAssets] = useState<any[]>([]);
+  const [ownedAssets, setOwnedAssets] = useAtom(ownedAssetsAtom);
 
   useEffect(() => {
     if (address) {

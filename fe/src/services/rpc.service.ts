@@ -121,6 +121,8 @@ export const fetchOwnedAssets = async (id: string, contractId = 1) => {
   try {
     const response = await fetch(`${API_URL}/v1/assets/${id}/owned`);
     const data = await response.json();
+
+    console.log(data);
     return data.ownedAssets
       .filter((el: OwnedAsset) => el.data.managingContractIndex === contractId)
       .map((el: OwnedAsset) => {

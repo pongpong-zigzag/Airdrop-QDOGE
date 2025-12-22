@@ -133,7 +133,7 @@ export const PayModal: React.FC<PayModalProps> = ({ open, onClose }) => {
               />
               {!amountValid && amount.length > 0 && (
                 <p className="text-xs text-destructive">
-                  Amount must be between {MIN_PAYMENT.toLocaleString()} and {MAX_PAYMENT.toLocaleString()} QU.
+                  Amount must be greater than {MIN_PAYMENT.toLocaleString()} QU.
                 </p>
               )}
             </div>}

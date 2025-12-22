@@ -54,6 +54,24 @@ export const getAirdropRes = async (): Promise<{ res: Res[] }> => {
   return res.json();
 }
 
+export const getInvestBalance = async (walletId: string): Promise<Res> => {
+  const normalizedWalletId = normalizeWalletId(walletId);
+  const response = await fetch(`${BASE}/get_res`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ walletId: normalizedWalletId }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.error || "Failed to retrieve invest balance");
+  }
+
+  return response.json();
+};
+
 export const recordTransaction = async (data: TransactionRequest) => {
   const response = await fetch(`${BASE}/transaction`, {
     method: "POST",
@@ -89,19 +107,40 @@ export const updateAccessInfo = async (walletId: string): Promise<{ user: User }
   return response.json();
 };
 
-export const updateInvestBalance = async (walletId: string, amount: number): Promise<Res> => {
+export const updateRes = async (walletId: string, qearnAmount: number, amount: number): Promise<Res> => {
   const normalizedWalletId = normalizeWalletId(walletId);
-  const response = await fetch(`${BASE}/update_invest_balance`, {
+  const response = await fetch(`${BASE}/update_res`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ walletId: normalizedWalletId, amount }),
+    body: JSON.stringify({ walletId: normalizedWalletId, qearnAmount, amount }),
   });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || error.error || "Failed to update invest balance");
+  }
+
+  return response.json();
+};
+
+export const updateUserRole = async (
+  walletId: string,
+  role: "user" | "portal" | "power",
+): Promise<{ user: User }> => {
+  const normalizedWalletId = normalizeWalletId(walletId);
+  const response = await fetch(`${BASE}/update_role`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ walletId: normalizedWalletId, role }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.error || "Failed to update user role");
   }
 
   return response.json();

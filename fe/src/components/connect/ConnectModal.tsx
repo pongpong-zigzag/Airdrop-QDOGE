@@ -90,10 +90,6 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
 
   // check if input is valid seed (55 chars and only lowercase letters)
   const privateKeyValidate = (pk: string) => {
-    if(pk.trim() === "") {
-      setErrorMsgPrivateSeed("Seed cannot be empty");
-      return;
-    }
     if (pk.length !== 55) {
       setErrorMsgPrivateSeed("Seed must be 55 characters long");
     }

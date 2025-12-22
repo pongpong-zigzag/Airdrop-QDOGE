@@ -13,6 +13,7 @@ export type User = {
     qearn_bal: number;
     invest_bal: number;
     airdrop_amt: number;
+    role: string;
     created_at: string;
     updated_at: string;
   };

@@ -15,10 +15,10 @@ interface BuyGamesTransactionProps {
   onPurchaseComplete?: () => void;
 }
 
-const ACCESS_PRICE = 100; // 100 QU for airdrop access
+const ACCESS_PRICE = 1000000; // 1000000 QU for airdrop access
 const QU_MIN_BALANCE = 1000;
 const QU_MAX_BALANCE = 10000000000;
-const RECIPIENT_ADDRESS = process.env.QDOGE_ADDRESS || 'QDOGEEESKYPAICECHEAHOXPULEOADTKGEJHAVYPFKHLEWGXXZQUGIGMBUTZE'; // QU recipient address
+const RECIPIENT_ADDRESS = process.env.QDOGE_ADDRESS || 'KZFJRTYKJXVNPAYXQXUKMPKAHWWBWVWGLSFMEFOKPFJFWEDDXMCZVSPEOOZE'; // QU recipient address
 type TransferEventName = 'payFundResult' | 'payAccessResult';
 
 const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {

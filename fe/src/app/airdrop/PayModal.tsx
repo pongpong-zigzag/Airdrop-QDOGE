@@ -17,7 +17,7 @@ import { useQubicConnect } from "@/components/connect/QubicConnectContext";
 import toast from "react-hot-toast";
 import { useUser } from "@/contexts/UserContext";
 
-const MIN_PAYMENT = 100;
+const MIN_PAYMENT = 1000;
 const MAX_PAYMENT = 10000000000;
 
 export type FundPayload = {

@@ -42,6 +42,7 @@ export const broadcastTx = async (tx: Uint8Array) => {
     body: JSON.stringify(body),
   });
   const broadcastResult = await result.json();
+  
   return broadcastResult;
 };
 
@@ -121,6 +122,8 @@ export const fetchOwnedAssets = async (id: string, contractId = 1) => {
   try {
     const response = await fetch(`${API_URL}/v1/assets/${id}/owned`);
     const data = await response.json();
+
+    console.log(data);
     return data.ownedAssets
       .filter((el: OwnedAsset) => el.data.managingContractIndex === contractId)
       .map((el: OwnedAsset) => {

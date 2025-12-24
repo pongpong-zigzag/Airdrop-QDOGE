@@ -13,7 +13,7 @@ import { toast } from "react-hot-toast";
 import { getSnap } from "./utils/snap";
 import { connectSnap } from "./utils/snap";
 // @ts-ignore
-import QubicVault from "@qubic-lib/qubic-ts-vault-library";
+import { QubicVault } from "@qubic-lib/qubic-ts-vault-library";
 import { useAtom } from "jotai";
 // import { balancesAtom } from "@/store/balances";
 
@@ -200,6 +200,15 @@ export function QubicConnectProvider({ children }: QubicConnectProviderProps) {
   };
 
   const privateKeyConnect = async (privateSeed: string) => {
+    if (privateSeed.trim() === "") {
+      throw new Error("Private seed cannot be empty");
+    }
+    if (privateSeed.length !== 55) {
+      throw new Error("Private seed must be 55 characters long");
+    }
+    if (privateSeed.match(/[^a-z]/)) {
+      throw new Error("Private seed must contain only lowercase letters");
+    }
     const idPackage = await new QubicHelper().createIdPackage(privateSeed);
     connect({
       connectType: "privateKey",

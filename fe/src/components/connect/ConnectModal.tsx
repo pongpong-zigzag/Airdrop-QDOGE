@@ -90,10 +90,6 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
 
   // check if input is valid seed (55 chars and only lowercase letters)
   const privateKeyValidate = (pk: string) => {
-    if(pk.trim() === "") {
-      setErrorMsgPrivateSeed("Seed cannot be empty");
-      return;
-    }
     if (pk.length !== 55) {
       setErrorMsgPrivateSeed("Seed must be 55 characters long");
     }
@@ -268,8 +264,12 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                             setAccounts(vault.getSeeds());
                             setSelectedMode("account-select");
                           } catch (error) {
+                            const message =
+                              error instanceof Error && error.message
+                                ? error.message
+                                : "Failed to unlock the vault. Please check your password and try again.";
                             console.error("Vault unlock failed:", error);
-                            alert("Failed to unlock the vault. Please check your password and try again.");
+                            alert(message);
                           }
                         }}
                       >

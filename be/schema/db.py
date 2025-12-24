@@ -65,7 +65,7 @@ def migration_001_create_base_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 
-            CHECK (length(wallet_id) <= 100),
+            CHECK (length(wallet_id) <= 60),
             CHECK (length(role) <= 10),
             CHECK (access_info IN (0, 1))
         );
@@ -83,7 +83,7 @@ def migration_001_create_base_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 
-            CHECK (length(wallet_id) <= 100)
+            CHECK (length(wallet_id) <= 60)
         );
         """)
         conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_res_wallet_id ON res(wallet_id);""")
@@ -100,8 +100,8 @@ def migration_001_create_base_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 
-            CHECK (length("from") <= 100),
-            CHECK (length("to") <= 100),
+            CHECK (length("from") <= 60),
+            CHECK (length("to") <= 60),
             CHECK (length(tx_hash) <= 100)
         );
         """)

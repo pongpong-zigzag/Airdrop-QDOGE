@@ -42,6 +42,7 @@ export const broadcastTx = async (tx: Uint8Array) => {
     body: JSON.stringify(body),
   });
   const broadcastResult = await result.json();
+  
   return broadcastResult;
 };
 

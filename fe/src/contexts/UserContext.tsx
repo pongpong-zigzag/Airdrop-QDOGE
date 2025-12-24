@@ -1,17 +1,15 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { useQubicConnect } from '../components/connect/QubicConnectContext';
-import { getUser, updateUserRole } from '../lib/api';
-import { fetchOwnedAssets } from '../services/rpc.service';
-import {User} from "../lib/types"
-import type { OwnedAssetSnapshot } from "../types/user.types";
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { useQubicConnect } from "../components/connect/QubicConnectContext";
+import { getUser } from "../lib/api";
+import { User } from "../lib/types";
 
 interface UserContextType {
   user: User | null;
   loading: boolean;
   error: string | null;
-  refreshUser: () => Promise<void>
+  refreshUser: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -33,37 +31,15 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setError(null);
     try {
       const result = await getUser(walletId);
-      let resolvedUser = result.user;
-
-      const assets: OwnedAssetSnapshot[] | undefined = await fetchOwnedAssets(walletId);
-      if (assets !== undefined) {
-        const holdsPortalAsset = assets.some(
-          (asset) => asset.asset?.trim().toLowerCase() === "qportal",
-        );
-        const currentRole = (resolvedUser.role || "user").toLowerCase();
-        const canAutoAssign = currentRole === "user" || currentRole === "portal";
-        const desiredRole = holdsPortalAsset ? "portal" : "user";
-
-        if (canAutoAssign && desiredRole !== currentRole) {
-          try {
-            const updated = await updateUserRole(walletId, desiredRole);
-            resolvedUser = updated.user;
-          } catch (roleError) {
-            console.error("Failed to update user role", roleError);
-          }
-        }
-      }
-
-      setUser(resolvedUser);
+      setUser(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load user');
-      console.error('Error loading user:', err);
+      setError(err instanceof Error ? err.message : "Failed to load user");
+      console.error("Error loading user:", err);
     } finally {
       setLoading(false);
     }
   }, [wallet?.publicKey]);
 
-  // Load user when wallet connects
   useEffect(() => {
     if (connected && wallet?.publicKey) {
       refreshUser();
@@ -72,18 +48,13 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [connected, wallet?.publicKey, refreshUser]);
 
-  return (
-    <UserContext.Provider value = {{ user, loading, error, refreshUser }}>
-      {children}
-    </UserContext.Provider>
-  );
+  return <UserContext.Provider value={{ user, loading, error, refreshUser }}>{children}</UserContext.Provider>;
 };
 
 export const useUser = (): UserContextType => {
   const context = useContext(UserContext);
   if (context === undefined) {
-    throw new Error('useUser must be used within a UserProvider');
+    throw new Error("useUser must be used within a UserProvider");
   }
   return context;
 };
-

@@ -3,8 +3,9 @@ import { QubicTransferQXOrderPayload } from "@qubic-lib/qubic-ts-library/dist/qu
 import { PublicKey } from "@qubic-lib/qubic-ts-library/dist/qubic-types/PublicKey";
 import { QubicTransaction } from "@qubic-lib/qubic-ts-library/dist/qubic-types/QubicTransaction";
 import { Long } from "@qubic-lib/qubic-ts-library/dist/qubic-types/Long";
+import { DEFAULT_TICK_OFFSET } from "@/constants";
 import { valueOfAssetName } from "@/utils/base.utils";
-import { fetchQuerySC } from "./rpc.service";
+import { fetchQuerySC, fetchTickInfo } from "./rpc.service";
 import { IFees } from "@/types/qx.types";
 import { base64ToUint8Array, createPayload } from "@/utils/tx.utils";
 import { createSCTx } from "./tx.service";
@@ -131,3 +132,66 @@ export const transferShareManagementRights = async (sourceID: string, amount: nu
   ]);
   return await createSCTx(sourceID, 1, 9, payload.getPackageSize(), amount, tick, payload);
 }
+
+// -----------------------------
+// Helpers for QX share transfer (used by Trade-In)
+// -----------------------------
+
+const ID_RE = /^[A-Z]{60}$/;
+
+export const identityToPublicKeyBytes = (identity: string): Uint8Array => {
+  const val = (identity ?? "").trim().toUpperCase();
+  if (!ID_RE.test(val)) {
+    throw new Error("Invalid Qubic identity");
+  }
+
+  // Decode first 56 chars (ignore 4-char checksum)
+  const core = val.slice(0, 56);
+  const out = new Uint8Array(32);
+
+  for (let chunk = 0; chunk < 4; chunk++) {
+    let n = 0n;
+    let mul = 1n;
+    for (let i = 0; i < 14; i++) {
+      const code = core.charCodeAt(chunk * 14 + i);
+      const digit = BigInt(code - 65);
+      if (digit < 0n || digit > 25n) throw new Error("Invalid base26 digit");
+      n += digit * mul;
+      mul *= 26n;
+    }
+
+    for (let b = 0; b < 8; b++) {
+      out[chunk * 8 + b] = Number((n >> BigInt(8 * b)) & 0xffn);
+    }
+  }
+
+  return out;
+};
+
+type CreateAssetTransferParams = {
+  assetName: string;
+  issuerId: string;
+  newOwnerId: string;
+  amount: number;
+};
+
+export const createAssetTransferTransaction = async (
+  wallet: { publicKey: string },
+  params: CreateAssetTransferParams,
+): Promise<QubicTransaction> => {
+  const tickInfo = await fetchTickInfo();
+  const current = Number((tickInfo as any)?.tick ?? 0);
+
+  // tx.service.createSCTx adds +5 ticks; subtract 5 here to keep the same effective offset
+  const baseTick = Math.max(0, current + DEFAULT_TICK_OFFSET - 5);
+
+  const fees = await getFees();
+  const fee = Number(fees?.transferFee ?? 0);
+
+  return transferShareOwnershipAndPossession(wallet.publicKey, fee, baseTick, {
+    issuer: identityToPublicKeyBytes(params.issuerId),
+    newOwnerAndPossessor: identityToPublicKeyBytes(params.newOwnerId),
+    assetName: valueOfAssetName(params.assetName),
+    numberOfShares: BigInt(params.amount),
+  });
+};

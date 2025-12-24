@@ -1,147 +1,99 @@
-const BASE = process.env.NEXT_PUBLIC_API_BASE_URL!;
+import { User } from "./types";
 
-import {User, Res, TransactionRequest} from "./types"
+// Backend API base URL
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
-const normalizeWalletId = (walletId: string) => walletId.trim().toUpperCase();
-
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
+export async function getUser(walletId: string): Promise<User> {
+  const res = await fetch(`${BASE_URL}/v1/users/get-or-create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletId }),
   });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
-  return res.json() as Promise<T>;
+  if (!res.ok) throw new Error(`Failed to fetch user (${res.status})`);
+  const data = await res.json();
+  return {
+    wallet_id: data.user.wallet_id,
+    access_info: data.user.access_info,
+    role: data.user.role ?? "user",
+  } as User;
 }
 
-export const getUser = async (walletId: string): Promise<{ user: User; created: boolean }> => {
-  const normalizedWalletId = normalizeWalletId(walletId);
-  const res = await fetch(`${BASE}/get_user`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ walletId: normalizedWalletId }),
+// Registration requires on-chain verification
+export async function confirmRegistration(walletId: string, txId: string) {
+  console.log(walletId, txId);
+  const res = await fetch(`${BASE_URL}/v1/registration/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletId, txId }),
   });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Registration confirmation failed");
+  return data;
+}
 
-  if(!res.ok) {
-    const error = await res.json();
-    throw new Error( error.error || 'Failed to get user');
-  }
+// Funding requires on-chain verification
+export async function confirmFunding(walletId: string, txId: string) {
+  const res = await fetch(`${BASE_URL}/v1/funding/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletId, txId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Funding confirmation failed");
+  return data;
+}
 
+export async function confirmTradein(walletId: string, txId: string) {
+  const res = await fetch(`${BASE_URL}/v1/tradein/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletId, txId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Trade-in confirmation failed");
+  return data;
+}
+
+export async function getAirdropRes() {
+  const res = await fetch(`${BASE_URL}/get_airdrop_res`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to fetch airdrop results");
   return res.json();
 }
 
-export const getAirdropRes = async (): Promise<{ res: Res[] }> => {
-  const res = await fetch(`${BASE}/get_airdrop_res`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+export async function getInvestBalance(walletId: string) {
+  const res = await fetch(`${BASE_URL}/get_res`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletId }),
   });
-
-  if(!res.ok){
-    const error = await res.json();
-    throw new Error( error.error || 'Failed to get Result Table');
-  }
-
+  if (!res.ok) throw new Error("Failed to fetch invest balance");
   return res.json();
 }
 
-export const getInvestBalance = async (walletId: string): Promise<Res> => {
-  const normalizedWalletId = normalizeWalletId(walletId);
-  const response = await fetch(`${BASE}/get_res`, {
+export async function recordTransaction({ sender, recipient, tx_hash }: { sender: string; recipient: string; tx_hash: string }) {
+  const res = await fetch(`${BASE_URL}/transaction`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ walletId: normalizedWalletId }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sender, recipient, tx_hash }),
   });
+  if (!res.ok) throw new Error("Failed to record transaction");
+  return res.json();
+}
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.error || "Failed to retrieve invest balance");
-  }
+// Legacy no-ops kept so older components compile
+export async function updateAccessInfo(walletId: string) {
+  // Deprecated in refactor. Keep for backwards compatibility.
+  return getUser(walletId);
+}
 
-  return response.json();
-};
+export async function updateRes(walletId: string, qearn_bal: number, invest_bal: number) {
+  // Deprecated in refactor
+  return { wallet_id: walletId, qearn_bal, invest_bal };
+}
 
-export const recordTransaction = async (data: TransactionRequest) => {
-  const response = await fetch(`${BASE}/transaction`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.error || "Failed to save transaction");
-  }
-
-  return response.json() as Promise<{ success: boolean; transaction: { tx_hash: string } }>;
-};
-
-export const updateAccessInfo = async (walletId: string): Promise<{ user: User }> => {
-  const normalizedWalletId = normalizeWalletId(walletId);
-  const response = await fetch(`${BASE}/update_access_info`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ walletId: normalizedWalletId }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.error || "Failed to update access info");
-  }
-
-  return response.json();
-};
-
-export const updateRes = async (walletId: string, qearnAmount: number, amount: number): Promise<Res> => {
-  const normalizedWalletId = normalizeWalletId(walletId);
-  const response = await fetch(`${BASE}/update_res`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ walletId: normalizedWalletId, qearnAmount, amount }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.error || "Failed to update invest balance");
-  }
-
-  return response.json();
-};
-
-export const updateUserRole = async (
-  walletId: string,
-  role: "user" | "portal" | "power",
-): Promise<{ user: User }> => {
-  const normalizedWalletId = normalizeWalletId(walletId);
-  const response = await fetch(`${BASE}/update_role`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ walletId: normalizedWalletId, role }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.error || "Failed to update user role");
-  }
-
-  return response.json();
-};
+export async function updateRole(walletId: string, role: string) {
+  // Deprecated
+  return { wallet_id: walletId, role };
+}

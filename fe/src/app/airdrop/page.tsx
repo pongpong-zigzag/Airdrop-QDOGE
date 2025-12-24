@@ -6,8 +6,6 @@ import { useUser } from "@/contexts/UserContext";
 import { PayModal } from "./PayModal";
 import { Button } from "@/components/ui/button";
 import { Res } from "@/lib/types";
-import { ownedAssetsAtom } from "@/store/assets";
-import { useAtom } from "jotai";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getAirdropRes, recordTransaction } from "@/lib/api";
 import TxPay from "./txpay";
@@ -48,7 +46,6 @@ const Airdrop: React.FC = () => {
   const [resError, setResError] = useState<string | null>(null);
   const [visilbleFundModel, setVisibleFundModal] = useState(false);
   const { connected, wallet, getSignedTx } = useQubicConnect();
-  const [ownedAssets] = useAtom(ownedAssetsAtom);
   const connectedWalletId = useMemo(
     () => wallet?.publicKey?.trim().toUpperCase() ?? null,
     [wallet?.publicKey]
@@ -60,7 +57,7 @@ const Airdrop: React.FC = () => {
       toast.error('Please connect your wallet first');
       return;
     }
-    if(wallet.connectType === 'mmSnap') {
+    if(((wallet.connectType ?? '').toLowerCase()) === 'mmsnap') {
       toast.error('MMSnap is not supported yet');
       return;
     }
@@ -91,6 +88,7 @@ const Airdrop: React.FC = () => {
       toast.loading("sending QDOGE...", { id: "sending" });
     
       const tx = await createAssetTx({
+        from: wallet.publicKey,
         to: walletId,
         amount: amount,
       });
@@ -98,12 +96,13 @@ const Airdrop: React.FC = () => {
       const signed = await getSignedTx(tx);
       const signedTx: Uint8Array = signed.tx;
 
-      await broadcastTx(signedTx);
+      const broadcastResult = await broadcastTx(signedTx);
+      const txId = broadcastResult.transactionId;
 
       await recordTransaction({
         sender: wallet.publicKey,
         recipient: walletId,
-        tx_hash: tx.getId(),
+        tx_hash: txId,
       });
 
       toast.dismiss("sending");

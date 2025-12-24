@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useAtom } from "jotai";
 import { MdLightMode, MdDarkMode } from "react-icons/md";
-import { StarHalf, UserIcon } from "lucide-react";
+import { ArrowLeftRight, StarHalf, UserIcon } from "lucide-react";
 import ConnectLink from "@/components/connect/ConnectLink";
 import { settingsAtom } from "@/store/settings";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@radix-ui/react-tooltip";
@@ -45,6 +45,22 @@ export default function Header() {
               </TooltipTrigger>
               <TooltipContent>
                 <p>Airdrop</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href="/tradein"
+                  className="rounded-lg border-none bg-transparent p-2 text-foreground transition-colors hover:text-primary"
+                >
+                  <ArrowLeftRight size={20} />
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Trade-In</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

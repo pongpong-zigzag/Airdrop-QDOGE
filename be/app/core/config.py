@@ -141,7 +141,7 @@ def get_settings() -> Settings:
 
     qxmr_issuer_id = _env_str(
         "QDOGE_ISSUER_ID",
-        "QDOGEEESKYPAICECHEAHOXPULEOADTKGEJHAVYPFKHLEWGXXZQUGIGMBUTZE",
+        "QDOGEFUQIYRLUQTDIZYEFJUCWYKXAKCPDOVUPUMVASPSNQCLVILBNNZPRHJY",
     ).upper()
 
     portal_asset_name = _env_str("PORTAL_ASSET_NAME", "PORTAL").upper()

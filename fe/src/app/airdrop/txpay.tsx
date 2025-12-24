@@ -105,6 +105,7 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
         const signedTx = signed.tx;
 
         const broadcastResult = await broadcastTx(signedTx);
+        console.log(broadcastResult);
         const txId = broadcastResult.transactionId;
 
         await recordTransaction({ sender: sourceAddress, recipient: dest, tx_hash: txId });

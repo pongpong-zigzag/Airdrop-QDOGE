@@ -101,8 +101,8 @@ export const issueAsset = async (sourceID: string, amount: number, tick: number,
 interface TransferShareOwnershipAndPossessionPayload {
   issuer: Uint8Array;
   newOwnerAndPossessor: Uint8Array;
-  assetName: number;
-  numberOfShares: number;
+  assetName: bigint;
+  numberOfShares: bigint;
 }
 
 export const transferShareOwnershipAndPossession = async (sourceID: string, amount: number, tick: number, data: TransferShareOwnershipAndPossessionPayload) => {

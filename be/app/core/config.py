@@ -217,7 +217,7 @@ def get_settings() -> Settings:
 
     cors_allow_origins = _env_csv(
         "CORS_ALLOW_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
+        "http://localhost:3000,http://127.0.0.1:3000,https://responsible-acceptance-production.up.railway.app",
     )
 
     admin_api_key = _env_str("ADMIN_API_KEY", "access_admin_api_key")

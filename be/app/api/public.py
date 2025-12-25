@@ -2,17 +2,38 @@ from __future__ import annotations
 
 import binascii
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.models import ConfirmTxRequest, TxLogRequest, WalletRequest
 from app.core.config import get_settings
 from app.core.db import conn_ctx
 from app.core.qubic import asset_name_value, identity_to_public_key_bytes, normalize_identity
-from app.services.assets import fetch_qearn_amount
+from app.core.security import require_admin
+from app.services.assets import fetch_qearn_amount, fetch_portal_amount
 from app.services.airdrop import build_legacy_res_rows, compute_estimate_for_wallet
 from app.services.rpc import QubicRpcClient, RpcError
 
 router = APIRouter()
+
+
+def _resolve_role(conn, wallet: str, settings) -> str:
+    # Admin is config-based allowlist
+    if wallet in settings.admin_wallets:
+        return "admin"
+    # Snapshot-based roles
+    if conn.execute("SELECT 1 FROM power_snapshot WHERE wallet_id = ?", (wallet,)).fetchone() is not None:
+        return "power"
+    if conn.execute("SELECT 1 FROM portal_snapshot WHERE wallet_id = ?", (wallet,)).fetchone() is not None:
+        return "portal"
+    return "user"
+
+
+def _fetch_one_int(conn, sql: str, params: tuple) -> int:
+    row = conn.execute(sql, params).fetchone()
+    if row is None:
+        return 0
+    v = row[0]
+    return int(v or 0)
 
 
 @router.get("/v1/config")
@@ -52,14 +73,7 @@ def get_or_create_user(req: WalletRequest):
             created = True
             cur = conn.execute("SELECT wallet_id, access_info FROM users WHERE wallet_id = ?", (wallet,)).fetchone()
 
-        role = "user"
-        if wallet in settings.admin_wallets:
-            role = "admin"
-        else:
-            if conn.execute("SELECT 1 FROM power_snapshot WHERE wallet_id = ?", (wallet,)).fetchone() is not None:
-                role = "power"
-            elif conn.execute("SELECT 1 FROM portal_snapshot WHERE wallet_id = ?", (wallet,)).fetchone() is not None:
-                role = "portal"
+        role = _resolve_role(conn, wallet, settings)
 
         return {
             "created": created,
@@ -69,6 +83,167 @@ def get_or_create_user(req: WalletRequest):
                 "role": role,
             },
         }
+
+
+@router.get("/v1/wallet/{wallet_id}/summary")
+def wallet_summary(wallet_id: str):
+    """
+    Public: returns ONLY the calling wallet's summary.
+    (No global tables. Non-admins should never download the full dataset.)
+    """
+    settings = get_settings()
+    wallet = normalize_identity(wallet_id)
+
+    with conn_ctx() as conn:
+        # ensure exists
+        conn.execute("INSERT OR IGNORE INTO users(wallet_id, access_info) VALUES (?, 0)", (wallet,))
+        u = conn.execute("SELECT wallet_id, access_info FROM users WHERE wallet_id = ?", (wallet,)).fetchone()
+
+        role = _resolve_role(conn, wallet, settings)
+        registered = int(u["access_info"]) == 1
+
+        funded = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(SUM(amount_credited),0) FROM fundings WHERE wallet_id = ?",
+            (wallet,),
+        )
+        qearn = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(qearn_amount,0) FROM qearn_snapshot WHERE wallet_id = ?",
+            (wallet,),
+        )
+        portal_amt = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(portal_amount,0) FROM portal_snapshot WHERE wallet_id = ?",
+            (wallet,),
+        )
+        power_qxmr = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(qxmr_amount,0) FROM power_snapshot WHERE wallet_id = ?",
+            (wallet,),
+        )
+
+        tradein_qxmr = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(SUM(qxmr_amount),0) FROM tradeins WHERE wallet_id = ?",
+            (wallet,),
+        )
+        tradein_qdoge = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(SUM(qdoge_amount),0) FROM tradeins WHERE wallet_id = ?",
+            (wallet,),
+        )
+
+        breakdown = compute_estimate_for_wallet(conn, wallet, settings)
+        total = int(sum(breakdown.values()))
+
+    return {
+        "wallet_id": wallet,
+        "role": role,
+        "registered": registered,
+        "access_info": int(u["access_info"]),
+        "funded_qu": int(funded),
+        "funding_cap_qu": int(settings.funding_cap_qu),
+        "funding_cap_remaining_qu": int(max(0, int(settings.funding_cap_qu) - int(funded))),
+        "snapshots": {
+            "qearn": int(qearn),
+            "portal": int(portal_amt),
+            "power_qxmr": int(power_qxmr),
+        },
+        "tradein": {
+            "qxmr": int(tradein_qxmr),
+            "qdoge": int(tradein_qdoge),
+        },
+        "airdrop": {
+            "breakdown": breakdown,
+            "total": total,
+        },
+    }
+
+
+@router.get("/v1/airdrop/rows/{wallet_id}")
+def airdrop_rows(wallet_id: str):
+    """
+    Public: returns ONLY the rows relevant to this wallet (legacy Res shape),
+    so non-admins can display a table without receiving everyone else's data.
+    """
+    settings = get_settings()
+    wallet = normalize_identity(wallet_id)
+
+    with conn_ctx() as conn:
+        # ensure exists
+        conn.execute("INSERT OR IGNORE INTO users(wallet_id, access_info) VALUES (?, 0)", (wallet,))
+
+        # balances used for legacy table columns
+        funded = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(SUM(amount_credited),0) FROM fundings WHERE wallet_id = ?",
+            (wallet,),
+        )
+        qearn = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(qearn_amount,0) FROM qearn_snapshot WHERE wallet_id = ?",
+            (wallet,),
+        )
+        portal_amt = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(portal_amount,0) FROM portal_snapshot WHERE wallet_id = ?",
+            (wallet,),
+        )
+        power_qxmr = _fetch_one_int(
+            conn,
+            "SELECT COALESCE(qxmr_amount,0) FROM power_snapshot WHERE wallet_id = ?",
+            (wallet,),
+        )
+
+        breakdown = compute_estimate_for_wallet(conn, wallet, settings)
+
+    rows = []
+    idx = 1
+
+    # Community row (role=user)
+    if (int(breakdown.get("community", 0)) > 0) or (int(funded) > 0) or (int(qearn) > 0):
+        rows.append(
+            {
+                "no": idx,
+                "wallet_id": wallet,
+                "role": "user",
+                "qearn_bal": int(qearn),
+                "invest_bal": int(funded),
+                "airdrop_amt": int(breakdown.get("community", 0)),
+            }
+        )
+        idx += 1
+
+    # Portal row
+    if (int(breakdown.get("portal", 0)) > 0) or (int(portal_amt) > 0):
+        rows.append(
+            {
+                "no": idx,
+                "wallet_id": wallet,
+                "role": "portal",
+                "qearn_bal": int(portal_amt),
+                "invest_bal": 0,
+                "airdrop_amt": int(breakdown.get("portal", 0)),
+            }
+        )
+        idx += 1
+
+    # Power row
+    if (int(breakdown.get("power", 0)) > 0) or (int(power_qxmr) > 0):
+        rows.append(
+            {
+                "no": idx,
+                "wallet_id": wallet,
+                "role": "power",
+                "qearn_bal": int(power_qxmr),
+                "invest_bal": 0,
+                "airdrop_amt": int(breakdown.get("power", 0)),
+            }
+        )
+        idx += 1
+
+    return {"res": rows}
 
 
 @router.post("/v1/registration/confirm")
@@ -99,12 +274,10 @@ async def confirm_registration(req: ConfirmTxRequest):
 
     with conn_ctx() as conn:
         conn.execute("INSERT OR IGNORE INTO users(wallet_id, access_info) VALUES (?, 0)", (wallet,))
-        # idempotent insert
         conn.execute(
             "INSERT OR IGNORE INTO registrations(tx_id, wallet_id, amount_qu, tick) VALUES (?, ?, ?, ?)",
             (tx_id, wallet, int(tx.amount), int(tx.tick_number)),
         )
-        # set access
         conn.execute(
             "UPDATE users SET access_info = 1, updated_at = datetime('now') WHERE wallet_id = ?",
             (wallet,),
@@ -140,7 +313,6 @@ async def confirm_funding(req: ConfirmTxRequest):
     if amount_sent <= 0:
         raise HTTPException(status_code=400, detail="funding amount must be > 0")
 
-    # eligibility check (best-effort): current balance must be >= reserve and >= min
     try:
         current_balance = await rpc.get_balance(wallet)
     except Exception:
@@ -154,7 +326,6 @@ async def confirm_funding(req: ConfirmTxRequest):
 
     with conn_ctx() as conn:
         conn.execute("INSERT OR IGNORE INTO users(wallet_id, access_info) VALUES (?, 0)", (wallet,))
-        # must be registered
         u = conn.execute("SELECT access_info FROM users WHERE wallet_id = ?", (wallet,)).fetchone()
         if u is None or int(u["access_info"]) != 1:
             raise HTTPException(status_code=400, detail="wallet not registered for community drop")
@@ -172,12 +343,19 @@ async def confirm_funding(req: ConfirmTxRequest):
             (tx_id, wallet, amount_sent, credited, int(tx.tick_number)),
         )
 
-        # update qearn snapshot opportunistically
         try:
             qearn = await fetch_qearn_amount(rpc, wallet)
+            portal = await fetch_portal_amount(rpc, wallet)
+
             conn.execute(
-                "INSERT INTO qearn_snapshot(wallet_id, qearn_amount) VALUES (?, ?) ON CONFLICT(wallet_id) DO UPDATE SET qearn_amount=excluded.qearn_amount, captured_at=datetime('now')",
+                "INSERT INTO qearn_snapshot(wallet_id, qearn_amount) VALUES (?, ?) "
+                "ON CONFLICT(wallet_id) DO UPDATE SET qearn_amount=excluded.qearn_amount, captured_at=datetime('now')",
                 (wallet, int(qearn)),
+            )
+            conn.execute(
+                "INSERT INTO portal_snapshot(wallet_id, portal_amount) VALUES (?, ?) "
+                "ON CONFLICT(wallet_id) DO UPDATE SET portal_amount=excluded.portal_amount, captured_at=datetime('now')",
+                (wallet, int(portal)),
             )
         except Exception:
             pass
@@ -217,7 +395,6 @@ async def confirm_tradein(req: ConfirmTxRequest):
     if int(tx.input_type) != 2:
         raise HTTPException(status_code=400, detail="trade-in tx must be QX TransferShareOwnershipAndPossession (inputType=2)")
 
-    # Parse payload
     try:
         payload = bytes.fromhex(tx.input_hex)
     except ValueError:
@@ -251,7 +428,6 @@ async def confirm_tradein(req: ConfirmTxRequest):
     with conn_ctx() as conn:
         conn.execute("INSERT OR IGNORE INTO users(wallet_id, access_info) VALUES (?, 0)", (wallet,))
 
-        # enforce trade-in pool cap
         total_tradein = conn.execute("SELECT COALESCE(SUM(qdoge_amount),0) FROM tradeins").fetchone()[0]
         total_tradein = int(total_tradein or 0)
         if total_tradein + qdoge_amount > settings.tradein_pool:
@@ -293,14 +469,7 @@ def legacy_get_user(req: WalletRequest):
             created = True
             cur = conn.execute("SELECT wallet_id, access_info FROM users WHERE wallet_id = ?", (wallet,)).fetchone()
 
-        role = "user"
-        if wallet in settings.admin_wallets:
-            role = "admin"
-        else:
-            if conn.execute("SELECT 1 FROM power_snapshot WHERE wallet_id = ?", (wallet,)).fetchone() is not None:
-                role = "power"
-            elif conn.execute("SELECT 1 FROM portal_snapshot WHERE wallet_id = ?", (wallet,)).fetchone() is not None:
-                role = "portal"
+        role = _resolve_role(conn, wallet, settings)
 
         return {
             "created": created,
@@ -310,22 +479,20 @@ def legacy_get_user(req: WalletRequest):
 
 @router.post("/update_access_info")
 def legacy_update_access_info(req: WalletRequest):
-    # Deprecated: registration is now verified via /v1/registration/confirm
     raise HTTPException(status_code=410, detail="/update_access_info deprecated; use /v1/registration/confirm")
 
 
-@router.post("/get_airdrop_res")
+@router.post("/get_airdrop_res", dependencies=[Depends(require_admin)])
 def legacy_get_airdrop_res():
+    # ✅ now ADMIN-ONLY (X-API-Key), so non-admins cannot download all wallets
     settings = get_settings()
     with conn_ctx() as conn:
         rows = build_legacy_res_rows(conn, settings)
-    # preserve key `res`
     return {"res": rows}
 
 
 @router.post("/transaction")
 def legacy_log_transaction(req: TxLogRequest):
-    # Keep legacy log table; does not affect eligibility
     with conn_ctx() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO transaction_log(sender, recipient, tx_hash) VALUES (?, ?, ?)",
@@ -337,23 +504,12 @@ def legacy_log_transaction(req: TxLogRequest):
 
 @router.post("/get_res")
 def legacy_get_res(req: WalletRequest):
-    wallet = normalize_identity(req.walletId)
-    with conn_ctx() as conn:
-        funded = conn.execute(
-            "SELECT COALESCE(SUM(amount_credited),0) FROM fundings WHERE wallet_id = ?",
-            (wallet,),
-        ).fetchone()[0]
-        qearn = conn.execute(
-            "SELECT COALESCE((SELECT qearn_amount FROM qearn_snapshot WHERE wallet_id = ?), 0)",
-            (wallet,),
-        ).fetchone()[0]
-
-    return {"wallet_id": wallet, "qearn_bal": int(qearn or 0), "invest_bal": int(funded or 0), "airdrop_amt": 0}
+    # ✅ prevent public enumeration
+    raise HTTPException(status_code=410, detail="/get_res deprecated; use GET /v1/wallet/{wallet_id}/summary")
 
 
 @router.post("/update_res")
 def legacy_update_res(req: dict):
-    # Deprecated: funding now verified via /v1/funding/confirm
     raise HTTPException(status_code=410, detail="/update_res deprecated; use /v1/funding/confirm")
 
 

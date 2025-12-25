@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from fastapi import APIRouter, Depends
+
 from app.api.models import ImportSnapshotRequest
 from app.core.db import conn_ctx
 from app.core.qubic import normalize_identity
-from app.services.airdrop import compute_allocations
-from fastapi import APIRouter, Depends
 from app.core.security import require_admin
+from app.services.airdrop import build_legacy_res_rows, compute_allocations
 
 router = APIRouter(dependencies=[Depends(require_admin)])
+
+
+@router.post("/admin/airdrop/res")
+def admin_airdrop_res():
+    """Admin-only: full airdrop table (legacy shape)."""
+    with conn_ctx() as conn:
+        rows = build_legacy_res_rows(conn)
+    return {"res": rows}
 
 
 @router.post("/admin/import/portal")

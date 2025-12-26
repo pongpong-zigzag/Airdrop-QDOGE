@@ -32,9 +32,9 @@ const AIRDROP_BREAKDOWN = [
   },
   {
     title: "QXMR Token Power Purchasers",
-    percent: "4% DOGE",
-    amount: "DOGE rewards",
-    description: "Dedicated DOGE allocation for power purchasers of QXMR.",
+    percent: "4% QDOGE",
+    amount: `${formatAmount(QDOGE_SUPPLY * 0.04)} QDOGE`,
+    description: "Dedicated QDOGE allocation for power purchasers of QXMR.",
     icon: Rocket,
   },
   {

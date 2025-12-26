@@ -26,7 +26,7 @@ type RoleKey = "user" | "portal" | "power";
 const TAB_CONFIG: Array<{ key: TabKey; label: string; role: RoleKey; emptyMessage: string }> = [
   { key: "community", label: "For Communities", role: "user", emptyMessage: "No community records found." },
   { key: "portal", label: "For Portal Holders", role: "portal", emptyMessage: "No portal holder records found." },
-  { key: "poweruser", label: "For PowerUsers", role: "power", emptyMessage: "No poweruser records found." },
+  { key: "poweruser", label: "For PowerPlayers", role: "power", emptyMessage: "No poweruser records found." },
 ];
 
 const normalizeRole = (role?: string): RoleKey => {

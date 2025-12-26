@@ -11,6 +11,7 @@ import logo from "@/assets/logo.png";
 
 const QDOGE_SUPPLY = 21_000_000_000;
 const SNAPSHOT_TIME = "Jan 5, 2026 12:00 UTC";
+const AIRDROP_SEND_TIME = "Jan 7, 2026 13:00 UTC";
 const TRADEIN_TIME = "Jan 8, 2026 12:00 UTC";
 
 const formatAmount = (value: number) => value.toLocaleString();
@@ -82,6 +83,10 @@ export default function HomePage() {
                 Snapshot: {SNAPSHOT_TIME}
               </div>
               <div className="flex items-center gap-2">
+                <Gift className="h-4 w-4 text-primary" />
+                Airdrop send-out: {AIRDROP_SEND_TIME}
+              </div>
+              <div className="flex items-center gap-2">
                 <CalendarClock className="h-4 w-4 text-primary" />
                 Trade-in opens: {TRADEIN_TIME}
               </div>
@@ -108,6 +113,14 @@ export default function HomePage() {
                 </div>
                 <div className="text-lg">{SNAPSHOT_TIME}</div>
                 <p className="text-xs text-muted-foreground">Holdings locked for allocation.</p>
+              </div>
+              <div className="rounded-lg border bg-muted/40 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Gift className="h-4 w-4 text-primary" />
+                  Airdrop send-out
+                </div>
+                <div className="text-lg">{AIRDROP_SEND_TIME}</div>
+                <p className="text-xs text-muted-foreground">Distribution begins.</p>
               </div>
               <div className="rounded-lg border bg-muted/40 p-4">
                 <div className="flex items-center gap-2 text-sm font-semibold">

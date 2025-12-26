@@ -71,18 +71,8 @@ export default function TradeinPage() {
 
       toast.loading("Sign in your wallet...", { id: "tradein" });
 
-      const connectType = wallet.connectType?.toLowerCase();
-      let signedTx: Uint8Array;
-
-      if (connectType === "walletconnect" || connectType === "mmsnap") {
-        const signed = await getSignedTx(tx);
-        signedTx = signed.tx;
-      } else if (connectType === "privatekey") {
-        if (!wallet.privateKey) throw new Error("Private key required");
-        signedTx = await tx.build(wallet.privateKey);
-      } else {
-        throw new Error(`Unsupported wallet type: ${wallet.connectType ?? "unknown"}`);
-      }
+      const signed = await getSignedTx(tx);
+      let signedTx: Uint8Array = signed.tx;
 
       const broadcastResult = await broadcastTx(signedTx);
       const txId = broadcastResult.transactionId;

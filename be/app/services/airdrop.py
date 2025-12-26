@@ -115,6 +115,7 @@ def get_weights_community(conn: sqlite3.Connection, settings: Settings | None = 
     weights: Dict[str, int] = {}
     for r in rows:
         funded = int(r["funded"] or 0)
+        if funded <= 0: continue
         qearn = int(r["qearn"] or 0)
         weight = _user_weight_scaled(
             funded_qu=funded,

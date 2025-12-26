@@ -197,7 +197,7 @@ def get_settings() -> Settings:
 
     qx_contract_id = _env_str(
         "QX_CONTRACT_ID",
-        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFXIB",
+        "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARMID",
     ).upper()
 
     qxmr_issuer_id = _env_str(
@@ -205,7 +205,7 @@ def get_settings() -> Settings:
         "QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB",
     ).upper()
 
-    qxmr_issuer_id = _env_str(
+    qdoge_issuer_id = _env_str(
         "QDOGE_ISSUER_ID",
         "QDOGEFUQIYRLUQTDIZYEFJUCWYKXAKCPDOVUPUMVASPSNQCLVILBNNZPRHJY",
     ).upper()

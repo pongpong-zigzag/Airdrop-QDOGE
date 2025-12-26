@@ -115,7 +115,8 @@ def get_weights_community(conn: sqlite3.Connection, settings: Settings | None = 
     weights: Dict[str, int] = {}
     for r in rows:
         funded = int(r["funded"] or 0)
-        if funded <= 0: continue
+        if funded <= 0:
+            continue
         qearn = int(r["qearn"] or 0)
         weight = _user_weight_scaled(
             funded_qu=funded,
@@ -154,6 +155,8 @@ def get_weights_portal(conn: sqlite3.Connection, settings: Settings | None = Non
 
     weights: Dict[str, int] = {}
     for r in rows:
+        if int(r["funded"] or 0) <= 0:
+            continue
         wgt = _user_weight_scaled(
             funded_qu=int(r["funded"] or 0),
             qearn=int(r["qearn"] or 0),
@@ -191,6 +194,8 @@ def get_weights_power(conn: sqlite3.Connection, settings: Settings | None = None
 
     weights: Dict[str, int] = {}
     for r in rows:
+        if int(r["funded"] or 0) <= 0:
+            continue
         wgt = _user_weight_scaled(
             funded_qu=int(r["funded"] or 0),
             qearn=int(r["qearn"] or 0),

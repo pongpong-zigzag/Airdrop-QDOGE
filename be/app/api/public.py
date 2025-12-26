@@ -256,7 +256,6 @@ async def confirm_registration(req: ConfirmTxRequest):
 
     try:
         tx = await rpc.get_tx_details(wallet, tx_id)
-        print(f"confirm_registration: tx={tx}")
     except RpcError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

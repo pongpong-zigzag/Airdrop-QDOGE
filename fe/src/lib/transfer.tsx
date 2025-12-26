@@ -62,6 +62,7 @@ export async function createAssetTx({ from, to, amount, assetName = "QDOGE" }: S
   const payload: DynamicPayload = payloadBuilder.getTransactionPayload();
 
   const feeLong = new Long(BigInt(QubicDefinitions.QX_TRANSFER_ASSET_FEE));
+  console.log(QubicDefinitions.QX_ADDRESS);
 
   const tx = new QubicTransaction()
     .setSourcePublicKey(from)

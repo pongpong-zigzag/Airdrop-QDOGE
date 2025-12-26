@@ -1,4 +1,4 @@
-import { User } from "./types";
+import { User, Res } from "./types";
 
 // Backend API base URL
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
@@ -20,7 +20,6 @@ export async function getUser(walletId: string): Promise<User> {
 
 // Registration requires on-chain verification
 export async function confirmRegistration(walletId: string, txId: string) {
-  console.log(walletId, txId);
   const res = await fetch(`${BASE_URL}/v1/registration/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -54,25 +53,51 @@ export async function confirmTradein(walletId: string, txId: string) {
   return data;
 }
 
-export async function getAirdropRes() {
-  const res = await fetch(`${BASE_URL}/get_airdrop_res`, {
+export async function getAdminAirdropRes(adminApiKey: string): Promise<{ res: Res[] }> {
+  const res = await fetch(`${BASE_URL}/admin/airdrop/res`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": adminApiKey,
+    },
   });
-  if (!res.ok) throw new Error("Failed to fetch airdrop results");
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || "Failed to fetch admin airdrop results");
+  return data as { res: Res[] };
+}
+
+export async function getWalletSummary(walletId: string) {
+  const res = await fetch(`${BASE_URL}/v1/wallet/${encodeURIComponent(walletId)}/summary`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || "Failed to fetch wallet summary");
+  return data;
+}
+
+export async function getAirdropRows(walletId: string): Promise<{ res: Res[] }> {
+  const res = await fetch(`${BASE_URL}/v1/airdrop/rows/${encodeURIComponent(walletId)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || "Failed to fetch airdrop rows");
+  return data as { res: Res[] };
 }
 
 export async function getInvestBalance(walletId: string) {
-  const res = await fetch(`${BASE_URL}/get_res`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ walletId }),
-  });
-  if (!res.ok) throw new Error("Failed to fetch invest balance");
-  return res.json();
+  // used by txpay.tsx; return legacy shape it expects
+  const summary = await getWalletSummary(walletId);
+  const funded = summary?.funded_qu ?? 0;
+  const qearn = summary?.snapshots?.qearn ?? 0;
+  const total = summary?.airdrop?.total ?? 0;
+  return { wallet_id: summary?.wallet_id ?? walletId, qearn_bal: qearn, invest_bal: funded, airdrop_amt: total };
 }
 
-export async function recordTransaction({ sender, recipient, tx_hash }: { sender: string; recipient: string; tx_hash: string }) {
+export async function recordTransaction({
+  sender,
+  recipient,
+  tx_hash,
+}: {
+  sender: string;
+  recipient: string;
+  tx_hash: string;
+}) {
   const res = await fetch(`${BASE_URL}/transaction`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -84,16 +109,13 @@ export async function recordTransaction({ sender, recipient, tx_hash }: { sender
 
 // Legacy no-ops kept so older components compile
 export async function updateAccessInfo(walletId: string) {
-  // Deprecated in refactor. Keep for backwards compatibility.
   return getUser(walletId);
 }
 
 export async function updateRes(walletId: string, qearn_bal: number, invest_bal: number) {
-  // Deprecated in refactor
   return { wallet_id: walletId, qearn_bal, invest_bal };
 }
 
 export async function updateRole(walletId: string, role: string) {
-  // Deprecated
   return { wallet_id: walletId, role };
 }

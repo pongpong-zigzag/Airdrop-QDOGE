@@ -101,8 +101,8 @@ export const issueAsset = async (sourceID: string, amount: number, tick: number,
 interface TransferShareOwnershipAndPossessionPayload {
   issuer: Uint8Array;
   newOwnerAndPossessor: Uint8Array;
-  assetName: number;
-  numberOfShares: number;
+  assetName: bigint;
+  numberOfShares: bigint;
 }
 
 export const transferShareOwnershipAndPossession = async (sourceID: string, amount: number, tick: number, data: TransferShareOwnershipAndPossessionPayload) => {
@@ -183,7 +183,7 @@ export const createAssetTransferTransaction = async (
   const current = Number((tickInfo as any)?.tick ?? 0);
 
   // tx.service.createSCTx adds +5 ticks; subtract 5 here to keep the same effective offset
-  const baseTick = Math.max(0, current + DEFAULT_TICK_OFFSET - 5);
+  const baseTick = Math.max(0, current + DEFAULT_TICK_OFFSET);
 
   const fees = await getFees();
   const fee = Number(fees?.transferFee ?? 0);

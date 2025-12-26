@@ -7,6 +7,53 @@ import sqlite3
 
 from app.core.config import Settings, get_settings
 
+# ---------------------------------------------------------------------------
+# Airdrop allocation weights (QDOGE)
+# ---------------------------------------------------------------------------
+#
+# Total supply is configured in Settings (default TOTAL_SUPPLY_QDOGE=21b),
+# and pools are derived from these percentages in Settings:
+#   community_pct = 0.075
+#   power_pct     = 0.04
+#   portal_pct    = 0.01
+#
+# Requested user weight formula (per-role):
+#
+#   User[i] = 0.7 * min(funded[i], funding_cap_qu)
+#           + 0.3 * ( (1 - prob_role) * qearn[i] + (prob_role * role_assets[i]) )
+#
+#   prob_power  = 0.7  (role_assets = qxmr[i])
+#   prob_portal = 0.4  (role_assets = portal[i])
+#   prob_com    = 0.0  (role_assets ignored)
+#
+# We implement the exact same formula using integer math by scaling by 100
+# (weights stay proportional; no float precision issues).
+#
+PROB_POWER_TENTHS = 7      # 0.7
+PROB_PORTAL_TENTHS = 4     # 0.4
+PROB_COMMUNITY_TENTHS = 0  # 0.0
+
+
+def _user_weight_scaled(
+    *,
+    funded_qu: int,
+    qearn: int,
+    role_assets: int,
+    prob_role_tenths: int,
+    funding_cap_qu: int,
+) -> int:
+    """Return user weight scaled by 100 (integer)."""
+    funded_capped = min(max(0, int(funded_qu)), max(0, int(funding_cap_qu)))
+    qearn_i = max(0, int(qearn))
+    role_assets_i = max(0, int(role_assets))
+
+    p = max(0, min(10, int(prob_role_tenths)))  # 0..10
+
+    # weight * 100
+    # = 70*funded_capped + 30*((1-p/10)*qearn + (p/10)*role_assets)
+    # = 70*funded_capped + 3*((10-p)*qearn + p*role_assets)
+    return int(70 * funded_capped + 3 * ((10 - p) * qearn_i + p * role_assets_i))
+
 
 @dataclass
 class AllocationRow:
@@ -68,21 +115,97 @@ def get_weights_community(conn: sqlite3.Connection, settings: Settings | None = 
     weights: Dict[str, int] = {}
     for r in rows:
         funded = int(r["funded"] or 0)
+        if funded <= 0:
+            continue
         qearn = int(r["qearn"] or 0)
-        weight = min(funded, settings.funding_cap_qu) + max(0, qearn)
+        weight = _user_weight_scaled(
+            funded_qu=funded,
+            qearn=qearn,
+            role_assets=0,
+            prob_role_tenths=PROB_COMMUNITY_TENTHS,
+            funding_cap_qu=settings.funding_cap_qu,
+        )
         if weight > 0:
             weights[str(r["wallet_id"]).upper()] = weight
     return weights
 
 
-def get_weights_portal(conn: sqlite3.Connection) -> Dict[str, int]:
-    rows = conn.execute("SELECT wallet_id, portal_amount FROM portal_snapshot WHERE portal_amount > 0").fetchall()
-    return {str(r["wallet_id"]).upper(): int(r["portal_amount"]) for r in rows}
+def get_weights_portal(conn: sqlite3.Connection, settings: Settings | None = None) -> Dict[str, int]:
+    settings = settings or get_settings()
+
+    # Portal pool is computed across:
+    #   - all registered users (users.access_info=1)
+    #   - plus any wallets present in portal_snapshot (even if not registered)
+    rows = conn.execute(
+        """
+        WITH wallets AS (
+            SELECT wallet_id FROM users WHERE access_info = 1
+            UNION
+            SELECT wallet_id FROM portal_snapshot
+        )
+        SELECT w.wallet_id,
+               COALESCE((SELECT SUM(amount_credited) FROM fundings f WHERE f.wallet_id = w.wallet_id), 0) AS funded,
+               COALESCE(q.qearn_amount, 0) AS qearn,
+               COALESCE(p.portal_amount, 0) AS portal_amount
+        FROM wallets w
+        LEFT JOIN qearn_snapshot q ON q.wallet_id = w.wallet_id
+        LEFT JOIN portal_snapshot p ON p.wallet_id = w.wallet_id
+        """
+    ).fetchall()
+
+    weights: Dict[str, int] = {}
+    for r in rows:
+        if int(r["funded"] or 0) <= 0:
+            continue
+        wgt = _user_weight_scaled(
+            funded_qu=int(r["funded"] or 0),
+            qearn=int(r["qearn"] or 0),
+            role_assets=int(r["portal_amount"] or 0),
+            prob_role_tenths=PROB_PORTAL_TENTHS,
+            funding_cap_qu=settings.funding_cap_qu,
+        )
+        if wgt > 0:
+            weights[str(r["wallet_id"]).upper()] = wgt
+    return weights
 
 
-def get_weights_power(conn: sqlite3.Connection) -> Dict[str, int]:
-    rows = conn.execute("SELECT wallet_id, qxmr_amount FROM power_snapshot WHERE qxmr_amount > 0").fetchall()
-    return {str(r["wallet_id"]).upper(): int(r["qxmr_amount"]) for r in rows}
+def get_weights_power(conn: sqlite3.Connection, settings: Settings | None = None) -> Dict[str, int]:
+    settings = settings or get_settings()
+
+    # Power pool is computed across:
+    #   - all registered users (users.access_info=1)
+    #   - plus any wallets present in power_snapshot (even if not registered)
+    rows = conn.execute(
+        """
+        WITH wallets AS (
+            SELECT wallet_id FROM users WHERE access_info = 1
+            UNION
+            SELECT wallet_id FROM power_snapshot
+        )
+        SELECT w.wallet_id,
+               COALESCE((SELECT SUM(amount_credited) FROM fundings f WHERE f.wallet_id = w.wallet_id), 0) AS funded,
+               COALESCE(q.qearn_amount, 0) AS qearn,
+               COALESCE(p.qxmr_amount, 0) AS qxmr_amount
+        FROM wallets w
+        LEFT JOIN qearn_snapshot q ON q.wallet_id = w.wallet_id
+        LEFT JOIN power_snapshot p ON p.wallet_id = w.wallet_id
+        """
+    ).fetchall()
+
+    weights: Dict[str, int] = {}
+    for r in rows:
+        if int(r["funded"] or 0) <= 0:
+            continue
+        wgt = _user_weight_scaled(
+            funded_qu=int(r["funded"] or 0),
+            qearn=int(r["qearn"] or 0),
+            role_assets=int(r["qxmr_amount"] or 0),
+            prob_role_tenths=PROB_POWER_TENTHS,
+            funding_cap_qu=settings.funding_cap_qu,
+        )
+        if wgt > 0:
+            weights[str(r["wallet_id"]).upper()] = wgt
+    return weights
 
 
 def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = None) -> Dict[str, Dict[str, int]]:
@@ -93,8 +216,8 @@ def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = No
     settings = settings or get_settings()
 
     community_weights = get_weights_community(conn, settings)
-    portal_weights = get_weights_portal(conn)
-    power_weights = get_weights_power(conn)
+    portal_weights = get_weights_portal(conn, settings)
+    power_weights = get_weights_power(conn, settings)
 
     return {
         "community": _largest_remainder_allocation(settings.community_pool, community_weights),
@@ -128,6 +251,12 @@ def build_legacy_res_rows(conn: sqlite3.Connection, settings: Settings | None = 
     settings = settings or get_settings()
     allocations = compute_allocations(conn, settings)
 
+    # Map of QEARN balances by wallet to avoid mixing with other asset amounts
+    qearn_map = {
+        str(r["wallet_id"]).upper(): int(r["qearn_amount"] or 0)
+        for r in conn.execute("SELECT wallet_id, qearn_amount FROM qearn_snapshot")
+    }
+
     rows: List[dict] = []
 
     # Community rows
@@ -154,14 +283,15 @@ def build_legacy_res_rows(conn: sqlite3.Connection, settings: Settings | None = 
     # Portal rows
     for wallet, alloc in allocations["portal"].items():
         portal_amt = conn.execute(
-            "SELECT portal_amount FROM portal_snapshot WHERE wallet_id = ?",
+            "SELECT COALESCE((SELECT portal_amount FROM portal_snapshot WHERE wallet_id = ?), 0)",
             (wallet,),
         ).fetchone()[0]
+        qearn = qearn_map.get(wallet, 0)
         rows.append(
             {
                 "wallet_id": wallet,
                 "role": "portal",
-                "qearn_bal": int(portal_amt or 0),
+                "qearn_bal": int(qearn or 0),  # QEARN balance only
                 "invest_bal": 0,
                 "airdrop_amt": int(alloc or 0),
             }
@@ -170,14 +300,15 @@ def build_legacy_res_rows(conn: sqlite3.Connection, settings: Settings | None = 
     # Power rows
     for wallet, alloc in allocations["power"].items():
         qxmr_amt = conn.execute(
-            "SELECT qxmr_amount FROM power_snapshot WHERE wallet_id = ?",
+            "SELECT COALESCE((SELECT qxmr_amount FROM power_snapshot WHERE wallet_id = ?), 0)",
             (wallet,),
         ).fetchone()[0]
+        qearn = qearn_map.get(wallet, 0)
         rows.append(
             {
                 "wallet_id": wallet,
                 "role": "power",
-                "qearn_bal": int(qxmr_amt or 0),
+                "qearn_bal": int(qearn or 0),  # QEARN balance only
                 "invest_bal": 0,
                 "airdrop_amt": int(alloc or 0),
             }

@@ -3,6 +3,63 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 
+# ---------------------------------------------------------------------------
+# Power-users snapshot (source of truth)
+# ---------------------------------------------------------------------------
+#
+# If you want the backend to automatically seed/synchronize the `power_snapshot`
+# table from code (instead of calling the admin import API), put your power-user
+# list here.
+#
+# Keys are Qubic identities (60 uppercase A-Z chars).
+# Values are the QXMR amount used as the *weight* for the power pool.
+#
+# If you want an equal-weight allowlist, just set every value to 1.
+#
+# IMPORTANT:
+#   - The app will normalize/validate identities on startup.
+#   - By default the sync mode is "replace" (it wipes and rebuilds the table).
+#
+POWER_USERS: dict[str, int] = {
+    # Example:
+    # "TRADECQBMAOXBESHFHOGHDMETSOAGOZURDDCOYMBIDQBWKTGVGQKBRICHPKC": 1,
+}
+
+# Convenience: if you prefer pasting a plain list (one identity per line),
+# you can use POWER_USERS_TEXT instead of the dict above.
+#
+# Example:
+# POWER_USERS_TEXT = """
+# TRADECQBMAOXBESHFHOGHDMETSOAGOZURDDCOYMBIDQBWKTGVGQKBRICHPKC
+# VSQHUXFSORZCEDQFAJHQMGLARLXCSVTBHVYBVGFEQERAAABFLVQHQGQGTNVL
+# """
+POWER_USERS_TEXT: str = """
+TRADECQBMAOXBESHFHOGHDMETSOAGOZURDDCOYMBIDQBWKTGVGQKBRICHPKC
+VSQHUXFSORZCEDQFAJHQMGLARLXCSVTBHVYBVGFEQERAAABFLVQHQGQGTNVL
+BFWYBPHCNERJHBBFVDVMQJBXOWSCZGWENFAZEFYFZERRWRMJDVURQJDCOQLB
+KQRWTOWQNYKQDDOPXNSQBQEVCVICQQVZFFPCUOIVVCYVQAPUSMPEOMEEFXDA
+DBFJMMSTRTWMMCFFWESYENHIRWRCVQLIJSOYICZUSDRRLLNSNMCJUFJGQJJF
+ECOJBYGXMVXTRGIFQYKBAHZMOTHCKHTWNVGJSGULGBLLFWPHXSJMLOCFZQXE
+LCXMWAQNLIEUSDDCVEITJAVGKGYCJHQSAKGFWOQVRBPLQKSECRMGVSGBOKBB
+IRUSHJHMVXBYGESTUIYFPGHZWXRDPANTGVYARDZUIGHKNTICDWTMIBEHFRWN
+ZEJCEZSNVRYHPAIWKZGJXTYSBPZCBOCYPSFILITCNAJJLOLELNLETDMAMQHK
+UNQPYXRPRONXIGALVPEVRENGGHQAYMVYWIITIYEJOCETBWFGCJLNFTDBYYMD
+ZFKOUZZXCKYQSGRONPMWTKUGJNQDKKWMGRTYWTTZADBBSKHUFXOMQXBCHNSG
+RVHIFCRJCZLVKBVHIZDIXIESZKMANTFPVCRYTNXFXDGRGOSRRZVSAESFRHWE
+RGYLAVQYSZMTPADQVIECIXKHXDZAWWYSCGROUTRWIFDJXMDEYWQJQWOEPGCN
+WNKIAQMMEBJBNGOFSOKAQDHSGIQACYPXKENVGGUOEDLRQVGUOJRIFQJENCMI
+NMWJMCCJPDTHBCRJGFZCIGZTRYKDAWXWKABAJUGURDBUBGAEVIIEBFRBWATA
+RVTAAAGYDGLMCHLKFXMWXWCTSCFDITVABBDJKUHQKGODWYPPEAJPQBOAGRPB
+MVLBHJXJIXZOUAAIOKAQZSWLJHMDXDHEHPOIQTJMWBWHOKAUPPJJJYTBAXFJ
+HEXCPJUVKPKQYBUDCYTCHAZCPLOARAKJCOCBYZOKLFZVSWMIJJAUGIECAUDL
+EYTRXMBHCDWUPCCCHMYYVPCQRNACBAMCLRQOFWLVHCNZAFBXYBWLXZXGMATN
+ZJZDXAOYQTNQTDORFYXZQDVVXQJCSFILRTVEUQAZBFGWCKNWTHYNGENFJXJN
+NINZOBTZZROKSCBBGIAWEKACCMNATDYLQWYIAVXSIAVNEAMSFVWLSLCAPOFA
+VOZIVESECYFKYBCYIAOJOCWDZEQDNPLQEEXAYXMCNDTLJOGWHZRBKTUAJOFI
+FTHFVJVMZWFOQEYAZPYSXASIRMXCPEUVCFQKZVTKXEXXLYKSYJRZQQEHGDPN
+"""
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -70,6 +127,15 @@ class Settings:
     admin_api_key: str = ""
     admin_wallets: list[str] = field(default_factory=list)
 
+    # --- snapshots ---
+    # Power snapshot seeded from config.py (POWER_USERS).
+    # If empty, no auto-sync happens.
+    power_users: dict[str, int] = field(default_factory=dict)
+    # How to sync POWER_USERS into the DB on startup:
+    #   - "replace": wipe and rebuild the table
+    #   - "merge": upsert listed wallets and keep existing others
+    power_snapshot_sync_mode: str = "replace"
+
     # --- db ---
     db_path: str = "schema/airdrop.db"
 
@@ -131,7 +197,7 @@ def get_settings() -> Settings:
 
     qx_contract_id = _env_str(
         "QX_CONTRACT_ID",
-        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFXIB",
+        "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARMID",
     ).upper()
 
     qxmr_issuer_id = _env_str(
@@ -139,7 +205,7 @@ def get_settings() -> Settings:
         "QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB",
     ).upper()
 
-    qxmr_issuer_id = _env_str(
+    qdoge_issuer_id = _env_str(
         "QDOGE_ISSUER_ID",
         "QDOGEFUQIYRLUQTDIZYEFJUCWYKXAKCPDOVUPUMVASPSNQCLVILBNNZPRHJY",
     ).upper()
@@ -155,8 +221,35 @@ def get_settings() -> Settings:
         "http://localhost:3000,http://127.0.0.1:3000",
     )
 
-    admin_api_key = _env_str("ADMIN_API_KEY", "")
-    admin_wallets = [w.upper() for w in _env_csv("ADMIN_WALLETS", "")]
+    admin_api_key = _env_str("ADMIN_API_KEY", "access_admin_api_key")
+    admin_wallets = [w.upper() for w in _env_csv("ADMIN_WALLETS", "KZFJRTYKJXVNPAYXQXUKMPKAHWWBWVWGLSFMEFOKPFJFWEDDXMCZVSPEOOZE")]
+
+    # Snapshot sync config
+    power_snapshot_sync_mode = _env_str("POWER_SNAPSHOT_SYNC_MODE", "replace").lower()
+
+    # POWER_USERS (code-defined) -> normalized/validated dict
+    from app.core.qubic import normalize_identity
+
+    power_users: dict[str, int] = {}
+
+    # Prefer explicit dict config (wallet -> qxmr_amount).
+    if POWER_USERS:
+        raw_iter = POWER_USERS.items()
+    # Otherwise parse POWER_USERS_TEXT, one identity per line -> weight=1
+    elif POWER_USERS_TEXT.strip():
+        lines = [ln.strip() for ln in POWER_USERS_TEXT.splitlines()]
+        ids = [ln for ln in lines if ln and not ln.startswith("#")]
+        raw_iter = ((wallet_id, 1) for wallet_id in ids)
+    else:
+        raw_iter = ()
+
+    for raw_wallet, raw_amt in raw_iter:
+        wallet = normalize_identity(str(raw_wallet))
+        amt = int(raw_amt)
+        if amt <= 0:
+            # keep config strict: weights must be positive
+            raise ValueError(f"POWER_USERS amount must be > 0 for {wallet}")
+        power_users[wallet] = amt
 
     db_path = _env_str("DB_PATH", "schema/airdrop.db")
 
@@ -183,5 +276,7 @@ def get_settings() -> Settings:
         cors_allow_origins=cors_allow_origins,
         admin_api_key=admin_api_key,
         admin_wallets=admin_wallets,
+        power_users=power_users,
+        power_snapshot_sync_mode=power_snapshot_sync_mode,
         db_path=db_path,
     )

@@ -7,6 +7,7 @@ export type Settings = {
   darkMode: boolean;
   notifications: boolean;
   theme: (typeof THEME_LIST)[number]["value"];
+  adminApiKey: string; // used only for admin endpoints
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -14,6 +15,7 @@ export const DEFAULT_SETTINGS: Settings = {
   darkMode: true,
   notifications: false,
   theme: THEME_LIST[0].value,
+  adminApiKey: "",
 };
 
 export const settingsAtom = atom(

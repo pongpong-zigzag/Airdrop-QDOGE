@@ -208,7 +208,7 @@ def airdrop_rows(wallet_id: str):
                 "no": idx,
                 "wallet_id": wallet,
                 "role": "user",
-                "qearn_bal": int(qearn),
+                "qearn_bal": int(qearn),  # QEARN balance only
                 "invest_bal": int(funded),
                 "airdrop_amt": int(breakdown.get("community", 0)),
             }
@@ -222,7 +222,7 @@ def airdrop_rows(wallet_id: str):
                 "no": idx,
                 "wallet_id": wallet,
                 "role": "portal",
-                "qearn_bal": int(portal_amt),
+                "qearn_bal": int(qearn),  # QEARN balance only
                 "invest_bal": 0,
                 "airdrop_amt": int(breakdown.get("portal", 0)),
             }
@@ -236,7 +236,7 @@ def airdrop_rows(wallet_id: str):
                 "no": idx,
                 "wallet_id": wallet,
                 "role": "power",
-                "qearn_bal": int(power_qxmr),
+                "qearn_bal": int(qearn),  # QEARN balance only
                 "invest_bal": 0,
                 "airdrop_amt": int(breakdown.get("power", 0)),
             }

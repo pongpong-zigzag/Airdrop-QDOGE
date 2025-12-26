@@ -92,8 +92,6 @@ const Airdrop: React.FC = () => {
       toast.success("Balance checked successfully");
       toast.loading("sending QDOGE...", { id: "sending" });
 
-      console.log(walletId);
-
       const tx = await createAssetTx({
         from: wallet.publicKey,
         to: walletId,

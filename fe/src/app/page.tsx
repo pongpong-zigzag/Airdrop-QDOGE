@@ -105,7 +105,7 @@ export default function HomePage() {
               </div>
               <Image src={logo} alt="QDOGE logo" className="h-12 w-auto" priority />
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border bg-muted/40 p-4">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <CalendarClock className="h-4 w-4 text-primary" />

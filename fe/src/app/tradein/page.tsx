@@ -21,12 +21,16 @@ const QXMR_ISSUER_ID =
   process.env.NEXT_PUBLIC_QXMR_ISSUER_ID ||
   "QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB";
 
-const RATIO = 100; // 100 QDOGE per 1 QXMR
+const RATIO = 100; // 1 QDOGE per 100 QXMR
+const MIN_QXMR = 100;
+const TRADEIN_OPEN_AT = new Date("2026-01-08T12:00:00Z").getTime();
+const TRADEIN_OPEN_LABEL = "Jan 8, 2026 12:00 UTC";
 
 export default function TradeinPage() {
   const { connected, wallet, getSignedTx } = useQubicConnect();
   const [ownedAssets, setOwnedAssets] = useAtom(ownedAssetsAtom);
   const [amount, setAmount] = useState<string>("");
+  const [isOpen, setIsOpen] = useState(() => Date.now() >= TRADEIN_OPEN_AT);
 
   const qxmrBalance = useMemo(() => {
     const a = ownedAssets.find((x) => x.asset?.toUpperCase() === "QXMR");
@@ -38,20 +42,31 @@ export default function TradeinPage() {
     fetchOwnedAssets(wallet.publicKey).then((assets) => setOwnedAssets((assets as any) || []));
   }, [connected, wallet?.publicKey, setOwnedAssets]);
 
+  useEffect(() => {
+    const id = setInterval(() => {
+      setIsOpen(Date.now() >= TRADEIN_OPEN_AT);
+    }, 15_000);
+    return () => clearInterval(id);
+  }, []);
+
   const parsed = useMemo(() => {
     const n = Number(amount);
     return Number.isFinite(n) ? Math.floor(n) : 0;
   }, [amount]);
 
-  const expectedQdoge = useMemo(() => parsed * RATIO, [parsed]);
+  const expectedQdoge = useMemo(() => parsed / RATIO, [parsed]);
 
   const handleTradein = async () => {
+    if (!isOpen) {
+      toast.error(`Trade-in opens ${TRADEIN_OPEN_LABEL}`);
+      return;
+    }
     if (!connected || !wallet) {
       toast.error("Please connect your wallet");
       return;
     }
-    if (parsed <= 0) {
-      toast.error("Enter a valid QXMR amount");
+    if (parsed < MIN_QXMR) {
+      toast.error(`Enter at least ${MIN_QXMR} QXMR`);
       return;
     }
     if (qxmrBalance < parsed) {
@@ -97,10 +112,13 @@ export default function TradeinPage() {
       <Card className="border-0 shadow-lg">
         <CardHeader>
           <CardTitle className="text-2xl font-bold">QXMR → QDOGE Trade-In</CardTitle>
+          <div className="text-xs text-muted-foreground">
+            {isOpen ? "Now live" : `Opens ${TRADEIN_OPEN_LABEL}`}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-sm text-muted-foreground">
-            Send QXMR to the burn address. You receive QDOGE at a fixed ratio of {RATIO}:1.
+            Send QXMR to the burn address. You receive QDOGE at a fixed ratio of 1:{RATIO}.
           </div>
 
           <div className="rounded-md bg-muted p-3 text-xs font-mono break-all">
@@ -116,16 +134,17 @@ export default function TradeinPage() {
             <Input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder="e.g. 10"
+              placeholder={`min ${MIN_QXMR}`}
               inputMode="numeric"
+              min={MIN_QXMR}
             />
             <div className="text-sm text-muted-foreground">
-              Expected: <span className="font-semibold">{expectedQdoge.toLocaleString()}</span> QDOGE
+              Expected: <span className="font-semibold">{expectedQdoge.toLocaleString()}</span> QDOGE · Minimum {MIN_QXMR} QXMR
             </div>
           </div>
 
-          <Button className="w-full" onClick={handleTradein}>
-            Trade In
+          <Button className="w-full" onClick={handleTradein} disabled={!isOpen}>
+            {isOpen ? "Trade In" : `Opens ${TRADEIN_OPEN_LABEL}`}
           </Button>
 
           <div className="text-xs text-muted-foreground">

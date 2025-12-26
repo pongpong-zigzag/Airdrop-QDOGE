@@ -181,11 +181,13 @@ export function WalletConnectProvider({ children }: WalletConnectProviderProps) 
   };
 
   useEffect(() => {
+    console.log("window.location.origin", window.location.origin);
     SignClient.init({
-      projectId: "a44b03a1b0d0e6eeb8d9cec61ae187e6",
+      projectId: "d02ab4631584cdac415a37a4e7affb7b",
+      relayUrl: "wss://relay.walletconnect.com",
       metadata: {
-        name: "QAirdrop",
-        description: "QAirdrop",
+        name: "QDOGE-airdrop",
+        description: "QDOGE-airdrop",
         url: window.location.origin,
         icons: ["https://walletconnect.com/walletconnect-logo.png"],
       },

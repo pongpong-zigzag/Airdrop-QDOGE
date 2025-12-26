@@ -17,8 +17,7 @@ import { useQubicConnect } from "@/components/connect/QubicConnectContext";
 import toast from "react-hot-toast";
 import { useUser } from "@/contexts/UserContext";
 
-const MIN_PAYMENT = 100;
-const MAX_PAYMENT = 10000000000;
+const MIN_PAYMENT = 1000000;
 
 export type FundPayload = {
   amount: number;
@@ -42,7 +41,7 @@ export const PayModal: React.FC<PayModalProps> = ({ open, onClose }) => {
       if (user?.access_info === 0) {
         return true;
       }
-      return !Number.isNaN(parsedAmount) && parsedAmount >= MIN_PAYMENT && parsedAmount <= MAX_PAYMENT
+      return !Number.isNaN(parsedAmount) && parsedAmount >= MIN_PAYMENT
     },
     [parsedAmount, user?.access_info],
   );
@@ -112,7 +111,7 @@ export const PayModal: React.FC<PayModalProps> = ({ open, onClose }) => {
               {
                 user?.access_info === 0 
                 ? "Send 100 QU to the address below to register for the airdrop" 
-                : "Send qubic tokens to the address below to join the airdrop. Minimum payment is 100 QU"
+                : "Send qubic tokens to the address below to join the airdrop. Minimum payment is 1000000 QU"
               }
             </DialogDescription>
           </DialogHeader>

@@ -32,8 +32,6 @@ export async function createQubicTx({ from, to, amount }: SendQubicParams) {
   const tickOffset = settings ? JSON.parse(settings).tickOffset : DEFAULT_TICK_OFFSET;
   const targetTick = currentTick.tick + tickOffset;
 
-  console.log(currentTick.tick, targetTick);
-
   const tx = new QubicTransaction()
     .setSourcePublicKey(from)
     .setDestinationPublicKey(to)
@@ -41,8 +39,6 @@ export async function createQubicTx({ from, to, amount }: SendQubicParams) {
     .setInputType(0)
     .setInputSize(0)
     .setAmount(new Long(amount));
-
-    console.log(tx);
 
   return tx;
 }
@@ -62,7 +58,6 @@ export async function createAssetTx({ from, to, amount, assetName = "QDOGE" }: S
   const payload: DynamicPayload = payloadBuilder.getTransactionPayload();
 
   const feeLong = new Long(BigInt(QubicDefinitions.QX_TRANSFER_ASSET_FEE));
-  console.log(QubicDefinitions.QX_ADDRESS);
 
   const tx = new QubicTransaction()
     .setSourcePublicKey(from)

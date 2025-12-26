@@ -29,6 +29,7 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
   const [state] = useContext(MetaMaskContext);
 
   const [selectedMode, setSelectedMode] = useState("none");
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   // Private seed handling
   const [privateSeed, setPrivateSeed] = useState("");
   const [errorMsgPrivateSeed, setErrorMsgPrivateSeed] = useState("");
@@ -109,15 +110,22 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
   const handlePasswordChange = (event: React.ChangeEvent<HTMLInputElement>) =>
     setPassword(event.target.value.toString());
 
+  const resetSelections = () => {
+    setSelectedMode("none");
+    setShowAdvancedOptions(false);
+  };
+
+  const handleClose = () => {
+    resetSelections();
+    onClose();
+  };
+
   return (
     <AnimatePresence>
       {open && (
         <motion.div
           className="bg-smoke-light fixed left-0 top-0 z-50 flex h-full w-full overflow-y-auto overflow-x-hidden p-5"
-          onClick={() => {
-            setSelectedMode("none");
-            onClose();
-          }}
+          onClick={handleClose}
           variants={overlayVariants}
           initial="hidden"
           animate="visible"
@@ -141,7 +149,7 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                   height={24}
                   priority
                 />
-                <IoClose onClick={onClose} className="h-5 w-5 cursor-pointer" />
+                <IoClose onClick={handleClose} className="h-5 w-5 cursor-pointer" />
               </motion.div>
 
               <AnimatePresence mode="wait">
@@ -185,19 +193,30 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                           />
                           <span className="w-32">Wallet Connect</span>
                         </Button>
-                        <div className="my-2 flex w-full items-center justify-center">
-                          <div className="grow border-t border-gray-300"></div>
-                          <span className="px-4 text-red-500">
-                            <AlertTriangle className="mr-2 inline-block" /> BE CAREFUL!
-                          </span>
-                          <div className="grow border-t border-gray-300"></div>
-                        </div>
-                        <Button variant="default" onClick={() => setSelectedMode("private-seed")}>
-                          Private Seed
+                        <Button
+                          variant="outline"
+                          className="flex items-center justify-center"
+                          onClick={() => setShowAdvancedOptions((prev) => !prev)}
+                        >
+                          {showAdvancedOptions ? "Hide advanced options" : "Advanced options"}
                         </Button>
-                        <Button variant="default" onClick={() => setSelectedMode("vault-file")}>
-                          Vault File
-                        </Button>
+                        {showAdvancedOptions && (
+                          <>
+                            {/* <div className="my-2 flex w-full items-center justify-center">
+                              <div className="grow border-t border-gray-300"></div>
+                              <span className="px-4 text-red-500">
+                                <AlertTriangle className="mr-2 inline-block" /> BE CAREFUL!
+                              </span>
+                              <div className="grow border-t border-gray-300"></div>
+                            </div> */}
+                            <Button variant="default" onClick={() => setSelectedMode("private-seed")}>
+                              Private Seed
+                            </Button>
+                            <Button variant="default" onClick={() => setSelectedMode("vault-file")}>
+                              Vault File
+                            </Button>
+                          </>
+                        )}
                       </>
                     )}
                   </motion.div>
@@ -215,14 +234,14 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                     <Input type="text" value={privateSeed} onChange={(e) => privateKeyValidate(e.target.value)} />
                     {errorMsgPrivateSeed && <p className="text-red-500">{errorMsgPrivateSeed}</p>}
                     <div className="grid grid-cols-2 gap-4">
-                      <Button variant="default" onClick={() => setSelectedMode("none")}>
+                      <Button variant="default" onClick={resetSelections}>
                         Cancel
                       </Button>
                       <Button
                         variant="default"
                         onClick={() => {
                           privateKeyConnect(privateSeed);
-                          setSelectedMode("none");
+                          resetSelections();
                           setPrivateSeed("");
                           onClose();
                         }}
@@ -245,7 +264,7 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                     <Input type="file" onChange={handleFileChange} />
                     <Input type="password" placeholder="Enter password" onChange={handlePasswordChange} />
                     <div className="grid grid-cols-2 gap-4">
-                      <Button variant="default" onClick={() => setSelectedMode("none")}>
+                      <Button variant="default" onClick={resetSelections}>
                         Cancel
                       </Button>
                       <Button
@@ -303,7 +322,7 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                         className="mt-4"
                         onClick={() => {
                           disconnect();
-                          setSelectedMode("none");
+                          resetSelections();
                         }}
                       >
                         Lock Wallet
@@ -317,8 +336,7 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                             publicKey: accounts[parseInt(selectedAccount.toString())]?.publicId,
                             alias: accounts[parseInt(selectedAccount.toString())]?.alias,
                           });
-                          setSelectedMode("none");
-                          onClose();
+                          handleClose();
                         }}
                       >
                         Select Account
@@ -341,11 +359,10 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                         state={state}
                         onConnectClick={() => {
                           mmSnapConnect();
-                          setSelectedMode("none");
-                          onClose();
+                          handleClose();
                         }}
                       />
-                      <Button variant="outline" className="text-primary-40" onClick={() => setSelectedMode("none")}>
+                      <Button variant="outline" className="text-primary-40" onClick={resetSelections}>
                         Cancel
                       </Button>
                     </div>
@@ -377,7 +394,7 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                       >
                         Open in Qubic Wallet
                       </Button>
-                      <Button variant="outline" className="text-primary-40" onClick={() => setSelectedMode("none")}>
+                      <Button variant="outline" className="text-primary-40" onClick={resetSelections}>
                         Cancel
                       </Button>
                     </div>

@@ -17,7 +17,7 @@ interface BuyGamesTransactionProps {
   onPurchaseComplete?: () => void;
 }
 
-const ACCESS_PRICE = 100; // 100 QU for registration
+const ACCESS_PRICE = 1_000_000; // 1000000 QU for registration
 const QU_RESERVE_BALANCE = 100_000_000; // must keep 100M QU
 const QU_MAX_INVEST = 10_000_000_000;
 
@@ -105,7 +105,7 @@ const TxPay: React.FC<BuyGamesTransactionProps> = ({ onPurchaseComplete }) => {
         const signedTx = signed.tx;
 
         const broadcastResult = await broadcastTx(signedTx);
-        console.log(broadcastResult);
+
         const txId = broadcastResult.transactionId;
 
         await recordTransaction({ sender: sourceAddress, recipient: dest, tx_hash: txId });

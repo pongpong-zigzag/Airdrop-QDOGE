@@ -176,7 +176,7 @@ def get_settings() -> Settings:
     power_pct = _env_float("POWER_PCT", 0.04)
     tradein_pct = _env_float("TRADEIN_PCT", 0.025)
 
-    registration_amount_qu = _env_int("REGISTRATION_AMOUNT_QU", 100)
+    registration_amount_qu = _env_int("REGISTRATION_AMOUNT_QU", 1_000_000)
     min_wallet_balance_qu = _env_int("MIN_WALLET_BALANCE_QU", 100_000_000)
     reserve_balance_qu = _env_int("RESERVE_BALANCE_QU", 100_000_000)
     funding_cap_qu = _env_int("FUNDING_CAP_QU", 10_000_000_000)
@@ -222,7 +222,8 @@ def get_settings() -> Settings:
     )
 
     admin_api_key = _env_str("ADMIN_API_KEY", "access_admin_api_key")
-    admin_wallets = [w.upper() for w in _env_csv("ADMIN_WALLETS", "KZFJRTYKJXVNPAYXQXUKMPKAHWWBWVWGLSFMEFOKPFJFWEDDXMCZVSPEOOZE")]
+    admin_wallets = [w.upper() for w in _env_csv("ADMIN_WALLETS", 
+    "KZFJRTYKJXVNPAYXQXUKMPKAHWWBWVWGLSFMEFOKPFJFWEDDXMCZVSPEOOZE, ILNJXVHAUXDGGBTTUOITOQGPAYUCFTNCPXDKOCPUOCDOTPUWXBIGRVQDLIKC, QDOGEEESKYPAICECHEAHOXPULEOADTKGEJHAVYPFKHLEWGXXZQUGIGMBUTZE, BURNQCDXPUVMBGCTKXZMLRCQYUWBPZREUCDIPECZOAYKCQNGTIUSDXLDULQL, QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB")]
 
     # Snapshot sync config
     power_snapshot_sync_mode = _env_str("POWER_SNAPSHOT_SYNC_MODE", "replace").lower()

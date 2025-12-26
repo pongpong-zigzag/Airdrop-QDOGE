@@ -181,8 +181,10 @@ export function WalletConnectProvider({ children }: WalletConnectProviderProps) 
   };
 
   useEffect(() => {
+    console.log("window.location.origin", window.location.origin);
     SignClient.init({
       projectId: "a44b03a1b0d0e6eeb8d9cec61ae187e6",
+      relayUrl: "wss://relay.walletconnect.com",
       metadata: {
         name: "QAirdrop",
         description: "QAirdrop",

@@ -422,7 +422,7 @@ async def confirm_tradein(req: ConfirmTxRequest):
     if shares <= 0:
         raise HTTPException(status_code=400, detail="numberOfShares must be > 0")
 
-    qdoge_amount = shares * settings.tradein_ratio_qdoge_per_qxmr
+    qdoge_amount = shares / settings.tradein_ratio_qdoge_per_qxmr
 
     with conn_ctx() as conn:
         conn.execute("INSERT OR IGNORE INTO users(wallet_id, access_info) VALUES (?, 0)", (wallet,))

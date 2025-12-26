@@ -21,7 +21,7 @@ const QXMR_ISSUER_ID =
   process.env.NEXT_PUBLIC_QXMR_ISSUER_ID ||
   "QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB";
 
-const RATIO = 100; // 100 QDOGE per 1 QXMR
+const RATIO = 100; // 1 QDOGE per 100 QXMR
 
 export default function TradeinPage() {
   const { connected, wallet, getSignedTx } = useQubicConnect();
@@ -43,7 +43,7 @@ export default function TradeinPage() {
     return Number.isFinite(n) ? Math.floor(n) : 0;
   }, [amount]);
 
-  const expectedQdoge = useMemo(() => parsed * RATIO, [parsed]);
+  const expectedQdoge = useMemo(() => parsed / RATIO, [parsed]);
 
   const handleTradein = async () => {
     if (!connected || !wallet) {
@@ -100,7 +100,7 @@ export default function TradeinPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-sm text-muted-foreground">
-            Send QXMR to the burn address. You receive QDOGE at a fixed ratio of {RATIO}:1.
+            Send QXMR to the burn address. You receive QDOGE at a fixed ratio of 1:{RATIO}.
           </div>
 
           <div className="rounded-md bg-muted p-3 text-xs font-mono break-all">

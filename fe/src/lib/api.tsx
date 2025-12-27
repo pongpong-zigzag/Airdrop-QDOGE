@@ -26,15 +26,20 @@ export type WalletSummary = {
 
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
-export async function getWalletSummary(walletId: string): Promise<WalletSummary> {
-  const res = await fetch(`${BASE_URL}/v1/wallet/${encodeURIComponent(walletId)}/summary`);
+type SummaryOptions = { fresh?: boolean };
+
+export async function getWalletSummary(walletId: string, options?: SummaryOptions): Promise<WalletSummary> {
+  const fresh = options?.fresh ? "?fresh=1" : "";
+  const res = await fetch(`${BASE_URL}/v1/wallet/${encodeURIComponent(walletId)}/summary${fresh}`, {
+    cache: "no-store",
+  });
   const data = (await res.json().catch(() => ({}))) as WalletSummary;
   if (!res.ok) throw new Error(data?.detail || "Failed to fetch wallet summary");
   return data;
 }
 
-export async function getUser(walletId: string): Promise<User> {
-  const summary = await getWalletSummary(walletId);
+export async function getUser(walletId: string, options?: SummaryOptions): Promise<User> {
+  const summary = await getWalletSummary(walletId, options);
   const roles = Array.isArray(summary?.roles)
     ? summary.roles
     : typeof summary?.role === "string"

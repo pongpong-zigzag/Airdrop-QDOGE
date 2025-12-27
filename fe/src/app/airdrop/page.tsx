@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -28,7 +29,24 @@ import { settingsAtom } from "@/store/settings";
 import TxPay from "./txpay";
 import { RegisterModal } from "./RegisterModal";
 
-type TabKey = "overall" | "community" | "portal" | "power";
+type RoleKey = "community" | "portal" | "power";
+type TabKey = "All" | RoleKey;
+type DisplayRole = RoleKey | "admin";
+
+const DISPLAY_ROLE_ORDER: DisplayRole[] = ["admin", "power", "portal", "community"];
+
+const ROLE_META: Record<DisplayRole, { label: string; className: string }> = {
+  admin: { label: "Admin", className: "bg-amber-50 text-amber-800 border-amber-200" },
+  power: { label: "Power", className: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  portal: { label: "Portal", className: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  community: { label: "Community", className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+};
+
+const formatNumber = (value?: number | string | null) => {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return "0";
+  return num.toLocaleString("en-US");
+};
 
 const resolveRawRoles = (roles?: string[] | string): string[] => {
   if (Array.isArray(roles)) {
@@ -43,29 +61,53 @@ const resolveRawRoles = (roles?: string[] | string): string[] => {
   return [];
 };
 
-const normalizeRole = (role?: string): TabKey => {
+const normalizeRole = (role?: string): RoleKey => {
   const r = (role ?? "").toLowerCase();
   if (r === "power") return "power";
   if (r === "portal") return "portal";
   return "community";
 };
 
-const extractRoles = (res: Res): TabKey[] => {
-  const rawRoles = resolveRawRoles(res.roles ?? res.role).filter((r) => r.toLowerCase() !== "admin");
-  const normalized = rawRoles.length > 0 ? rawRoles : ["community"];
-  const mapped = normalized.map((r) => normalizeRole(r));
-  return Array.from(new Set(mapped));
+const normalizeDisplayRole = (role?: string): DisplayRole | null => {
+  const r = (role ?? "").trim().toLowerCase();
+  if (!r) return null;
+  if (r === "admin") return "admin";
+  return normalizeRole(r) as DisplayRole;
 };
 
-const stringifyRoles = (roles?: string[] | string): string => {
-  if (Array.isArray(roles)) {
-    return roles.join(", ");
-  }
-  if (typeof roles === "string") {
-    return roles;
-  }
-  return "community";
+const getDisplayRoles = (roles?: string[] | string): DisplayRole[] => {
+  const normalized = resolveRawRoles(roles)
+    .map((r) => normalizeDisplayRole(r))
+    .filter(Boolean) as DisplayRole[];
+
+  const deduped = Array.from(new Set(normalized)).sort(
+    (a, b) => DISPLAY_ROLE_ORDER.indexOf(a) - DISPLAY_ROLE_ORDER.indexOf(b),
+  );
+
+  return deduped.length > 0 ? deduped : ["community"];
 };
+
+const extractRoles = (res: Res): TabKey[] => {
+  return getDisplayRoles(res.roles ?? res.role).filter((r) => r !== "admin") as TabKey[];
+};
+
+const RoleBadges = React.memo(({ roles }: { roles: DisplayRole[] }) => (
+  <div className="flex flex-wrap gap-1">
+    {roles.map((role) => {
+      const meta = ROLE_META[role] ?? ROLE_META.community;
+      return (
+        <Badge
+          key={role}
+          variant="secondary"
+          className={`border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${meta.className}`}
+        >
+          {meta.label}
+        </Badge>
+      );
+    })}
+  </div>
+));
+RoleBadges.displayName = "RoleBadges";
 
 export default function AirdropPage() {
   const { user, error: userError } = useUser();
@@ -83,13 +125,15 @@ export default function AirdropPage() {
     [wallet?.publicKey],
   );
 
+  const adminApiKey = useMemo(() => settings.adminApiKey?.trim() ?? "", [settings.adminApiKey]);
+
   const isAdmin = useMemo(() => {
     const roles = resolveRawRoles(walletSummary?.roles ?? walletSummary?.role);
     return roles.some((r) => r.toLowerCase() === "admin");
   }, [walletSummary?.role, walletSummary?.roles]);
   const canSeeAll = useMemo(
-    () => isAdmin && !!settings.adminApiKey?.trim(),
-    [isAdmin, settings.adminApiKey],
+    () => isAdmin && !!adminApiKey,
+    [isAdmin, adminApiKey],
   );
 
   const refresh = React.useCallback(async () => {
@@ -98,7 +142,7 @@ export default function AirdropPage() {
     try {
       let summary: WalletSummary | null = null;
       if (connectedWalletId) {
-        summary = await getWalletSummary(connectedWalletId);
+        summary = await getWalletSummary(connectedWalletId, { fresh: true });
         setWalletSummary(summary);
       } else {
         setWalletSummary(null);
@@ -107,7 +151,7 @@ export default function AirdropPage() {
       const isAdminRole = resolveRawRoles(summary?.roles ?? summary?.role).some(
         (r) => r.toLowerCase() === "admin",
       );
-      const adminKey = settings.adminApiKey?.trim();
+      const adminKey = adminApiKey;
 
       if (isAdminRole && adminKey) {
         const data = await getAdminAirdropRes(adminKey);
@@ -123,78 +167,90 @@ export default function AirdropPage() {
     } finally {
       setLoading(false);
     }
-  }, [connectedWalletId, settings.adminApiKey]);
+  }, [connectedWalletId, adminApiKey]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   const rowsByRole = useMemo(() => {
-    const buckets: Record<TabKey, Res[]> = { overall: [], community: [], portal: [], power: [] };
+    const buckets: Record<TabKey, Res[]> = { All: [], community: [], portal: [], power: [] };
     for (const r of resTable) {
-      buckets.overall.push(r);
+      buckets.All.push(r);
       const rawRoles = resolveRawRoles(r.roles ?? r.role).map((x) => x.toLowerCase());
-      if (rawRoles.includes("admin")) continue; // admin only shows in overall
+      if (rawRoles.includes("admin")) continue; // admin only shows in All
       const roles = extractRoles(r);
       for (const role of roles) buckets[role].push(r);
     }
     return buckets;
   }, [resTable]);
 
-  const sendQDOGE = async (destWallet: string, amount: number) => {
-    if (!connected || !wallet) {
-      toast.error("Please connect your wallet first");
-      return;
-    }
-    if (!canSeeAll) {
-      toast.error("Admin API key required");
-      return;
-    }
-    if (!amount || amount <= 0) {
-      toast.error("Amount must be greater than 0");
-      return;
-    }
+  const sortedRowsByRole = useMemo(() => {
+    const sorter = (rows: Res[]) => [...rows].sort((a, b) => (b.airdrop_amt ?? 0) - (a.airdrop_amt ?? 0));
+    return {
+      All: sorter(rowsByRole.All),
+      community: sorter(rowsByRole.community),
+      portal: sorter(rowsByRole.portal),
+      power: sorter(rowsByRole.power),
+    };
+  }, [rowsByRole]);
 
-    try {
-      toast.loading("Checking QDOGE balance...", { id: "check" });
-      const assets = await fetchOwnedAssets(wallet.publicKey);
-      const qdogeAsset = assets.find((a: OwnedAssetSnapshot) => a.asset === "QDOGE");
-      toast.dismiss("check");
-      if (!qdogeAsset) {
-        toast.error("QDOGE not found in your assets");
+  const sendQDOGE = React.useCallback(
+    async (destWallet: string, amount: number) => {
+      if (!connected || !wallet) {
+        toast.error("Please connect your wallet first");
         return;
       }
-      if (qdogeAsset.amount < amount) {
-        toast.error("Insufficient QDOGE balance");
+      if (!canSeeAll) {
+        toast.error("Admin API key required");
+        return;
+      }
+      if (!amount || amount <= 0) {
+        toast.error("Amount must be greater than 0");
         return;
       }
 
-      toast.loading("Signing & broadcasting...", { id: "send" });
-      const tx = await createAssetTx({ from: wallet.publicKey, to: destWallet, amount });
-      const signed = await getSignedTx(tx);
-      const broadcastResult = await broadcastTx(signed.tx);
-      const txId = broadcastResult.transactionId;
+      try {
+        toast.loading("Checking QDOGE balance...", { id: "check" });
+        const assets = await fetchOwnedAssets(wallet.publicKey);
+        const qdogeAsset = assets.find((a: OwnedAssetSnapshot) => a.asset === "QDOGE");
+        toast.dismiss("check");
+        if (!qdogeAsset) {
+          toast.error("QDOGE not found in your assets");
+          return;
+        }
+        if (qdogeAsset.amount < amount) {
+          toast.error("Insufficient QDOGE balance");
+          return;
+        }
 
-      await recordTransaction(settings.adminApiKey, {
-        wallet_id: wallet.publicKey,
-        from_id: wallet.publicKey,
-        to_id: destWallet,
-        txId,
-        type: "qdoge",
-        amount,
-      });
+        toast.loading("Signing & broadcasting...", { id: "send" });
+        const tx = await createAssetTx({ from: wallet.publicKey, to: destWallet, amount });
+        const signed = await getSignedTx(tx);
+        const broadcastResult = await broadcastTx(signed.tx);
+        const txId = broadcastResult.transactionId;
 
-      toast.dismiss("send");
-      toast.success("QDOGE sent");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Failed to send QDOGE";
-      toast.dismiss("send");
-      toast.error(message);
-    }
-  };
+        await recordTransaction(adminApiKey, {
+          wallet_id: wallet.publicKey,
+          from_id: wallet.publicKey,
+          to_id: destWallet,
+          txId,
+          type: "qdoge",
+          amount,
+        });
+
+        toast.dismiss("send");
+        toast.success("QDOGE sent");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Failed to send QDOGE";
+        toast.dismiss("send");
+        toast.error(message);
+      }
+    },
+    [adminApiKey, canSeeAll, connected, getSignedTx, wallet],
+  );
 
   const renderTable = (rows: Res[], showActions: boolean, view: TabKey) => {
-    const isOverall = view === "overall";
     const colSpanBase = 8; // No per-role columns
     const colSpan = showActions ? colSpanBase + 1 : colSpanBase;
     const roleAirdrop = (row: Res) => {
@@ -202,11 +258,6 @@ export default function AirdropPage() {
       if (view === "portal") return row.portal_amt ?? 0;
       if (view === "power") return row.power_amt ?? 0;
       return row.airdrop_amt;
-    };
-    const rowsSorted = [...rows].sort((a, b) => (b.airdrop_amt ?? 0) - (a.airdrop_amt ?? 0));
-    const roleLabel = (row: Res) => {
-      if (isOverall) return stringifyRoles(row.roles ?? row.role);
-      return view.charAt(0).toUpperCase() + view.slice(1);
     };
     return (
       <Table>
@@ -224,16 +275,18 @@ export default function AirdropPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rowsSorted.map((r) => (
+          {rows.map((r) => (
             <TableRow key={`${r.wallet_id}-${r.no}`}>
               <TableCell>{r.no}</TableCell>
               <TableCell>{canSeeAll ? r.wallet_id : "YOU"}</TableCell>
-              <TableCell>{roleLabel(r)}</TableCell>
-              <TableCell>{r.qubic_bal}</TableCell>
-              <TableCell>{r.qearn_bal}</TableCell>
-              <TableCell>{r.portal_bal}</TableCell>
-              <TableCell>{r.qxmr_bal}</TableCell>
-              <TableCell>{roleAirdrop(r)}</TableCell>
+              <TableCell>
+                <RoleBadges roles={getDisplayRoles(r.roles ?? r.role)} />
+              </TableCell>
+              <TableCell>{formatNumber(r.qubic_bal)}</TableCell>
+              <TableCell>{formatNumber(r.qearn_bal)}</TableCell>
+              <TableCell>{formatNumber(r.portal_bal)}</TableCell>
+              <TableCell>{formatNumber(r.qxmr_bal)}</TableCell>
+              <TableCell>{formatNumber(roleAirdrop(r))}</TableCell>
               {showActions && (
                 <TableCell className="text-center">
                   <Button size="sm" onClick={() => sendQDOGE(r.wallet_id, r.airdrop_amt)}>
@@ -286,24 +339,24 @@ export default function AirdropPage() {
 
       <Card className="mx-auto w-full border-0 shadow-lg mt-2">
         {canSeeAll ? (
-          <Tabs defaultValue="overall" className="h-full w-full">
+          <Tabs defaultValue="All" className="h-full w-full">
             <TabsList className="mb-2 flex w-full">
-              <TabsTrigger value="overall" className="flex-1">Overall</TabsTrigger>
+              <TabsTrigger value="All" className="flex-1">All</TabsTrigger>
               <TabsTrigger value="community" className="flex-1">Community</TabsTrigger>
               <TabsTrigger value="portal" className="flex-1">Portal</TabsTrigger>
               <TabsTrigger value="power" className="flex-1">Power</TabsTrigger>
             </TabsList>
             <TabsContent value="community" className="overflow-auto">
-              {renderTable(rowsByRole.community, true, "community")}
+              {renderTable(sortedRowsByRole.community, true, "community")}
             </TabsContent>
             <TabsContent value="portal" className="overflow-auto">
-              {renderTable(rowsByRole.portal, true, "portal")}
+              {renderTable(sortedRowsByRole.portal, true, "portal")}
             </TabsContent>
             <TabsContent value="power" className="overflow-auto">
-              {renderTable(rowsByRole.power, true, "power")}
+              {renderTable(sortedRowsByRole.power, true, "power")}
             </TabsContent>
-            <TabsContent value="overall" className="overflow-auto">
-              {renderTable(rowsByRole.overall, true, "overall")}
+            <TabsContent value="All" className="overflow-auto">
+              {renderTable(sortedRowsByRole.All, true, "All")}
             </TabsContent>
           </Tabs>
         ) : (
@@ -313,27 +366,58 @@ export default function AirdropPage() {
             )}
 
             {connectedWalletId && walletSummary && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <div className="rounded-md border p-3">
                   <div className="text-xs text-muted-foreground">Registration</div>
-                  <div className="font-semibold">{walletSummary.registered ? "Registered" : "Not registered"}</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <Badge
+                      variant="secondary"
+                      className={`border px-3 py-0.5 text-sm font-medium ${
+                        walletSummary.registered ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-800 border-amber-200"
+                      }`}
+                    >
+                      {walletSummary.registered ? "Registered" : "Not registered"}
+                    </Badge>
+                  </div>
                 </div>
+
                 <div className="rounded-md border p-3">
                   <div className="text-xs text-muted-foreground">Role</div>
-                  <div className="font-semibold">{stringifyRoles(walletSummary.roles ?? walletSummary.role)}</div>
+                  <div className="mt-1">
+                    <RoleBadges roles={getDisplayRoles(walletSummary.roles ?? walletSummary.role)} />
+                  </div>
                 </div>
+
                 <div className="rounded-md border p-3">
                   <div className="text-xs text-muted-foreground">QUBIC</div>
-                  <div className="font-semibold">{walletSummary?.balances?.qubic_bal ?? 0}</div>
+                  <div className="mt-1 font-semibold">{formatNumber(walletSummary?.balances?.qubic_bal)}</div>
                 </div>
+
                 <div className="rounded-md border p-3">
                   <div className="text-xs text-muted-foreground">Estimated airdrop</div>
-                  <div className="font-semibold">{walletSummary?.airdrop?.estimated ?? 0}</div>
+                  <div className="mt-1 font-semibold">
+                    {Number(walletSummary?.airdrop?.estimated ?? 0) > 0
+                      ? formatNumber(walletSummary?.airdrop?.estimated)
+                      : "Not assigned"}
+                  </div>
+                  {walletSummary?.airdrop?.breakdown && (
+                    <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
+                      {(["community", "portal", "power"] as RoleKey[]).map((k) => {
+                        const amt = walletSummary?.airdrop?.breakdown?.[k] ?? 0;
+                        if (!amt) return null;
+                        return (
+                          <Badge key={k} variant="outline" className="border px-2 py-0.5 font-normal">
+                            {ROLE_META[k].label}: {formatNumber(amt)}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {renderTable(resTable, false, "overall")}
+            {renderTable(sortedRowsByRole.All, false, "All")}
           </div>
         )}
       </Card>

@@ -17,6 +17,8 @@ import { QubicVault } from "@qubic-lib/qubic-ts-vault-library";
 import { useAtom } from "jotai";
 // import { balancesAtom } from "@/store/balances";
 
+const WALLET_STORAGE_KEY = "wallet";
+
 interface Wallet {
   connectType: string;
   publicKey: string;
@@ -55,13 +57,13 @@ export function QubicConnectProvider({ children }: QubicConnectProviderProps) {
   const qHelper = new QubicHelper();
 
   const connect = (wallet: Wallet): void => {
-    localStorage.setItem("wallet", JSON.stringify(wallet));
+    localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(wallet));
     setWallet(wallet);
     setConnected(true);
   };
 
   const disconnect = (): void => {
-    localStorage.removeItem("wallet");
+    localStorage.removeItem(WALLET_STORAGE_KEY);
     setWallet(null);
     setConnected(false);
     // setBalances([]);
@@ -70,6 +72,26 @@ export function QubicConnectProvider({ children }: QubicConnectProviderProps) {
   const toggleConnectModal = (): void => {
     setShowConnectModal(!showConnectModal);
   };
+
+  // Hydrate persisted wallet on mount to avoid forcing a reconnection after refresh.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = localStorage.getItem(WALLET_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: Wallet = JSON.parse(raw);
+      if (!parsed?.publicKey || !connectTypes.includes(parsed.connectType)) {
+        localStorage.removeItem(WALLET_STORAGE_KEY);
+        return;
+      }
+      setWallet(parsed);
+      setConnected(true);
+    } catch (error) {
+      console.error("Failed to restore wallet from storage", error);
+      localStorage.removeItem(WALLET_STORAGE_KEY);
+    }
+  }, []);
 
   const getMetaMaskPublicId = async (accountIdx: number = 0, confirm: boolean = false): Promise<string> => {
     return await window.ethereum.request({

@@ -16,7 +16,8 @@ from app.services.rpc import QubicRpcClient, RpcError
 
 router = APIRouter()
 
-CACHE_TTL_SECONDS = 120  # serve cached wallet snapshot if fresher than this
+# Cache window for wallet summary snapshots. Keep short to reduce staleness on UI.
+CACHE_TTL_SECONDS = 30  # seconds
 
 # Role helpers
 ROLE_ORDER = ["admin", "power", "portal", "community"]
@@ -113,7 +114,7 @@ def get_config():
 
 
 @router.get("/v1/wallet/{wallet_id}/summary")
-async def wallet_summary(wallet_id: str):
+async def wallet_summary(wallet_id: str, fresh: bool = False):
     """Public: returns ONLY the requested wallet's status.
 
     Note: Without wallet auth, the server cannot cryptographically enforce that the
@@ -123,50 +124,51 @@ async def wallet_summary(wallet_id: str):
     wallet = normalize_identity(wallet_id)
 
     with conn_ctx() as conn:
-        # Serve a fresh-enough cached snapshot to avoid slow RPC for typical requests.
-        cached = conn.execute(
-            """
-            SELECT u.access_info,
-                   u.role,
-                   r.qubic_bal,
-                   r.qearn_bal,
-                   r.portal_bal,
-                   r.qxmr_bal,
-                   r.airdrop_amt,
-                   r.updated_at
-            FROM users u
-            LEFT JOIN res r ON r.wallet_id = u.wallet_id
-            WHERE u.wallet_id = ?
-            """,
-            (wallet,),
-        ).fetchone()
-        if cached and cached["updated_at"]:
-            try:
-                updated_at = datetime.fromisoformat(str(cached["updated_at"])).replace(tzinfo=None)
-                age = (datetime.utcnow() - updated_at).total_seconds()
-            except Exception:
-                age = CACHE_TTL_SECONDS + 1
-            if age <= CACHE_TTL_SECONDS:
-                registered = bool(cached["access_info"] == 1)
-                roles = _parse_roles(cached["role"])
-                qubic_bal_raw = int(cached["qubic_bal"] or 0)
-                return {
-                    "wallet_id": wallet,
-                    "registered": registered,
-                    "role": _format_roles(roles),
-                    "roles": roles,
-                    "balances": {
-                        "qubic_bal": qubic_bal_raw,
-                        "qubic_bal_capped": min(max(0, qubic_bal_raw), int(settings.qubic_cap)),
-                        "qearn_bal": int(cached["qearn_bal"] or 0),
-                        "portal_bal": int(cached["portal_bal"] or 0),
-                        "qxmr_bal": int(cached["qxmr_bal"] or 0),
-                        "qubic_cap": int(settings.qubic_cap),
-                    },
-                    "airdrop": {
-                        "estimated": int(cached["airdrop_amt"] or 0),
-                    },
-                }
+        # Serve a fresh-enough cached snapshot to avoid slow RPC for typical requests, unless caller forces fresh.
+        if not fresh:
+            cached = conn.execute(
+                """
+                SELECT u.access_info,
+                       u.role,
+                       r.qubic_bal,
+                       r.qearn_bal,
+                       r.portal_bal,
+                       r.qxmr_bal,
+                       r.airdrop_amt,
+                       r.updated_at
+                FROM users u
+                LEFT JOIN res r ON r.wallet_id = u.wallet_id
+                WHERE u.wallet_id = ?
+                """,
+                (wallet,),
+            ).fetchone()
+            if cached and cached["updated_at"]:
+                try:
+                    updated_at = datetime.fromisoformat(str(cached["updated_at"])).replace(tzinfo=None)
+                    age = (datetime.utcnow() - updated_at).total_seconds()
+                except Exception:
+                    age = CACHE_TTL_SECONDS + 1
+                if age <= CACHE_TTL_SECONDS:
+                    registered = bool(cached["access_info"] == 1)
+                    roles = _parse_roles(cached["role"])
+                    qubic_bal_raw = int(cached["qubic_bal"] or 0)
+                    return {
+                        "wallet_id": wallet,
+                        "registered": registered,
+                        "role": _format_roles(roles),
+                        "roles": roles,
+                        "balances": {
+                            "qubic_bal": qubic_bal_raw,
+                            "qubic_bal_capped": min(max(0, qubic_bal_raw), int(settings.qubic_cap)),
+                            "qearn_bal": int(cached["qearn_bal"] or 0),
+                            "portal_bal": int(cached["portal_bal"] or 0),
+                            "qxmr_bal": int(cached["qxmr_bal"] or 0),
+                            "qubic_cap": int(settings.qubic_cap),
+                        },
+                        "airdrop": {
+                            "estimated": int(cached["airdrop_amt"] or 0),
+                        },
+                    }
 
     rpc = QubicRpcClient(settings)
 

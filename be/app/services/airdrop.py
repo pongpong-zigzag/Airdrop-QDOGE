@@ -1,323 +1,157 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Tuple
-
 import sqlite3
+from dataclasses import dataclass
+from typing import Dict, Iterable, Tuple
 
 from app.core.config import Settings, get_settings
 
-# ---------------------------------------------------------------------------
-# Airdrop allocation weights (QDOGE)
-# ---------------------------------------------------------------------------
-#
-# Total supply is configured in Settings (default TOTAL_SUPPLY_QDOGE=21b),
-# and pools are derived from these percentages in Settings:
-#   community_pct = 0.075
-#   power_pct     = 0.04
-#   portal_pct    = 0.01
-#
-# Requested user weight formula (per-role):
-#
-#   User[i] = 0.7 * min(funded[i], funding_cap_qu)
-#           + 0.3 * ( (1 - prob_role) * qearn[i] + (prob_role * role_assets[i]) )
-#
-#   prob_power  = 0.7  (role_assets = qxmr[i])
-#   prob_portal = 0.4  (role_assets = portal[i])
-#   prob_com    = 0.0  (role_assets ignored)
-#
-# We implement the exact same formula using integer math by scaling by 100
-# (weights stay proportional; no float precision issues).
-#
-PROB_POWER_TENTHS = 7      # 0.7
-PROB_PORTAL_TENTHS = 4     # 0.4
-PROB_COMMUNITY_TENTHS = 0  # 0.0
 
-
-def _user_weight_scaled(
-    *,
-    funded_qu: int,
-    qearn: int,
-    role_assets: int,
-    prob_role_tenths: int,
-    funding_cap_qu: int,
-) -> int:
-    """Return user weight scaled by 100 (integer)."""
-    funded_capped = min(max(0, int(funded_qu)), max(0, int(funding_cap_qu)))
-    qearn_i = max(0, int(qearn))
-    role_assets_i = max(0, int(role_assets))
-
-    p = max(0, min(10, int(prob_role_tenths)))  # 0..10
-
-    # weight * 100
-    # = 70*funded_capped + 30*((1-p/10)*qearn + (p/10)*role_assets)
-    # = 70*funded_capped + 3*((10-p)*qearn + p*role_assets)
-    return int(70 * funded_capped + 3 * ((10 - p) * qearn_i + p * role_assets_i))
-
-
-@dataclass
-class AllocationRow:
+@dataclass(frozen=True)
+class WalletSnapshot:
     wallet_id: str
-    amount: int
+    role: str
+    qubic_bal: int
+    qearn_bal: int
+    portal_bal: int
+    qxmr_bal: int
 
 
-def _largest_remainder_allocation(pool: int, weights: Dict[str, int]) -> Dict[str, int]:
-    """Allocate an integer pool proportionally using Hamilton / largest remainder.
+def _alloc_proportional(pool: int, weights: Dict[str, int]) -> Dict[str, int]:
+    """Deterministic proportional integer allocation using largest remainder.
 
-    Returns per-wallet allocation; sum equals pool (unless weights empty).
+    - Returns 0 allocations if weights are empty or total weight is 0.
+    - Sum of returned allocations equals `pool` (when total weight > 0).
     """
     if pool <= 0 or not weights:
-        return {k: 0 for k in weights.keys()}
+        return {k: 0 for k in weights}
+    total = sum(max(0, int(w)) for w in weights.values())
+    if total <= 0:
+        return {k: 0 for k in weights}
 
-    total_w = sum(max(0, int(w)) for w in weights.values())
-    if total_w <= 0:
-        return {k: 0 for k in weights.keys()}
-
-    # floor allocations
     floors: Dict[str, int] = {}
-    remainders: List[Tuple[str, float]] = []
+    remainders: list[Tuple[int, str]] = []  # (remainder_numerator, wallet_id)
     allocated = 0
-    for k, w in weights.items():
+    for wallet, w in weights.items():
         w_i = max(0, int(w))
-        exact = pool * (w_i / total_w)
-        fl = int(exact)
-        floors[k] = fl
-        allocated += fl
-        remainders.append((k, exact - fl))
+        prod = pool * w_i
+        fl = prod // total
+        rem = prod % total
+        floors[wallet] = int(fl)
+        allocated += int(fl)
+        remainders.append((int(rem), wallet))
 
     remaining = pool - allocated
     if remaining <= 0:
         return floors
 
-    # distribute remaining by largest fractional remainder, then deterministic tie-breaker
-    remainders.sort(key=lambda x: (-x[1], x[0]))
+    # largest remainder, deterministic tie-break by wallet_id
+    remainders.sort(key=lambda x: (-x[0], x[1]))
     for i in range(remaining):
-        k = remainders[i % len(remainders)][0]
-        floors[k] += 1
+        floors[remainders[i % len(remainders)][1]] += 1
     return floors
 
 
-def get_weights_community(conn: sqlite3.Connection, settings: Settings | None = None) -> Dict[str, int]:
-    settings = settings or get_settings()
-
-    # eligible = registered users (access_info=1)
+def _fetch_registered_snapshots(conn: sqlite3.Connection) -> list[WalletSnapshot]:
     rows = conn.execute(
         """
         SELECT u.wallet_id,
-               COALESCE((SELECT SUM(amount_credited) FROM fundings f WHERE f.wallet_id = u.wallet_id), 0) AS funded,
-               COALESCE(q.qearn_amount, 0) AS qearn
+               COALESCE(u.role, 'community') AS role,
+               COALESCE(r.qubic_bal, 0) AS qubic_bal,
+               COALESCE(r.qearn_bal, 0) AS qearn_bal,
+               COALESCE(r.portal_bal, 0) AS portal_bal,
+               COALESCE(r.qxmr_bal, 0) AS qxmr_bal
         FROM users u
-        LEFT JOIN qearn_snapshot q ON q.wallet_id = u.wallet_id
+        LEFT JOIN res r ON r.wallet_id = u.wallet_id
         WHERE u.access_info = 1
+        ORDER BY u.wallet_id ASC
         """
     ).fetchall()
-
-    weights: Dict[str, int] = {}
+    out: list[WalletSnapshot] = []
     for r in rows:
-        funded = int(r["funded"] or 0)
-        if funded <= 0:
-            continue
-        qearn = int(r["qearn"] or 0)
-        weight = _user_weight_scaled(
-            funded_qu=funded,
-            qearn=qearn,
-            role_assets=0,
-            prob_role_tenths=PROB_COMMUNITY_TENTHS,
-            funding_cap_qu=settings.funding_cap_qu,
+        out.append(
+            WalletSnapshot(
+                wallet_id=str(r["wallet_id"]).upper(),
+                role=str(r["role"] or "community").lower(),
+                qubic_bal=int(r["qubic_bal"] or 0),
+                qearn_bal=int(r["qearn_bal"] or 0),
+                portal_bal=int(r["portal_bal"] or 0),
+                qxmr_bal=int(r["qxmr_bal"] or 0),
+            )
         )
-        if weight > 0:
-            weights[str(r["wallet_id"]).upper()] = weight
-    return weights
+    return out
 
 
-def get_weights_portal(conn: sqlite3.Connection, settings: Settings | None = None) -> Dict[str, int]:
-    settings = settings or get_settings()
+def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = None) -> dict[str, dict[str, int]]:
+    """Compute airdrop allocation maps per role.
 
-    # Portal pool is computed across:
-    #   - all registered users (users.access_info=1)
-    #   - plus any wallets present in portal_snapshot (even if not registered)
-    rows = conn.execute(
-        """
-        WITH wallets AS (
-            SELECT wallet_id FROM users WHERE access_info = 1
-            UNION
-            SELECT wallet_id FROM portal_snapshot
-        )
-        SELECT w.wallet_id,
-               COALESCE((SELECT SUM(amount_credited) FROM fundings f WHERE f.wallet_id = w.wallet_id), 0) AS funded,
-               COALESCE(q.qearn_amount, 0) AS qearn,
-               COALESCE(p.portal_amount, 0) AS portal_amount
-        FROM wallets w
-        LEFT JOIN qearn_snapshot q ON q.wallet_id = w.wallet_id
-        LEFT JOIN portal_snapshot p ON p.wallet_id = w.wallet_id
-        """
-    ).fetchall()
+    Roles:
+      - community: weight = min(qubic_bal, qubic_cap) + qearn_bal
+      - power:     weight = qxmr_bal
+      - portal:    allocation = floor(portal_pool * portal_bal / portal_total_supply)
 
-    weights: Dict[str, int] = {}
-    for r in rows:
-        if int(r["funded"] or 0) <= 0:
-            continue
-        wgt = _user_weight_scaled(
-            funded_qu=int(r["funded"] or 0),
-            qearn=int(r["qearn"] or 0),
-            role_assets=int(r["portal_amount"] or 0),
-            prob_role_tenths=PROB_PORTAL_TENTHS,
-            funding_cap_qu=settings.funding_cap_qu,
-        )
-        if wgt > 0:
-            weights[str(r["wallet_id"]).upper()] = wgt
-    return weights
-
-
-def get_weights_power(conn: sqlite3.Connection, settings: Settings | None = None) -> Dict[str, int]:
-    settings = settings or get_settings()
-
-    # Power pool is computed across:
-    #   - all registered users (users.access_info=1)
-    #   - plus any wallets present in power_snapshot (even if not registered)
-    rows = conn.execute(
-        """
-        WITH wallets AS (
-            SELECT wallet_id FROM users WHERE access_info = 1
-            UNION
-            SELECT wallet_id FROM power_snapshot
-        )
-        SELECT w.wallet_id,
-               COALESCE((SELECT SUM(amount_credited) FROM fundings f WHERE f.wallet_id = w.wallet_id), 0) AS funded,
-               COALESCE(q.qearn_amount, 0) AS qearn,
-               COALESCE(p.qxmr_amount, 0) AS qxmr_amount
-        FROM wallets w
-        LEFT JOIN qearn_snapshot q ON q.wallet_id = w.wallet_id
-        LEFT JOIN power_snapshot p ON p.wallet_id = w.wallet_id
-        """
-    ).fetchall()
-
-    weights: Dict[str, int] = {}
-    for r in rows:
-        if int(r["funded"] or 0) <= 0:
-            continue
-        wgt = _user_weight_scaled(
-            funded_qu=int(r["funded"] or 0),
-            qearn=int(r["qearn"] or 0),
-            role_assets=int(r["qxmr_amount"] or 0),
-            prob_role_tenths=PROB_POWER_TENTHS,
-            funding_cap_qu=settings.funding_cap_qu,
-        )
-        if wgt > 0:
-            weights[str(r["wallet_id"]).upper()] = wgt
-    return weights
-
-
-def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = None) -> Dict[str, Dict[str, int]]:
-    """Compute per-category allocations.
-
-    Returns: {"community": {wallet: amt}, "portal": {...}, "power": {...}}
+    Note: portal pool uses the fixed denominator (portal_total_supply) per spec.
+    This can leave some tokens undistributed if not all portal units are held by registered users.
     """
     settings = settings or get_settings()
+    snaps = _fetch_registered_snapshots(conn)
 
-    community_weights = get_weights_community(conn, settings)
-    portal_weights = get_weights_portal(conn, settings)
-    power_weights = get_weights_power(conn, settings)
+    community_weights: Dict[str, int] = {}
+    power_weights: Dict[str, int] = {}
+    portal_balances: Dict[str, int] = {}
 
-    return {
-        "community": _largest_remainder_allocation(settings.community_pool, community_weights),
-        "portal": _largest_remainder_allocation(settings.portal_pool, portal_weights),
-        "power": _largest_remainder_allocation(settings.power_pool, power_weights),
-    }
+    for s in snaps:
+        if s.role == "power":
+            if s.qxmr_bal > 0:
+                power_weights[s.wallet_id] = int(s.qxmr_bal)
+        elif s.role == "portal":
+            if s.portal_bal > 0:
+                portal_balances[s.wallet_id] = int(s.portal_bal)
+        else:
+            # community
+            w = int(min(max(0, s.qubic_bal), settings.qubic_cap) + max(0, s.qearn_bal))
+            if w > 0:
+                community_weights[s.wallet_id] = w
+
+    community_alloc = _alloc_proportional(int(settings.community_pool), community_weights)
+    power_alloc = _alloc_proportional(int(settings.power_pool), power_weights)
+
+    # portal: fixed denominator
+    portal_alloc: Dict[str, int] = {}
+    denom = max(1, int(settings.portal_total_supply))
+    pool = max(0, int(settings.portal_pool))
+    for wallet, bal in portal_balances.items():
+        bal_i = max(0, int(bal))
+        portal_alloc[wallet] = int((pool * bal_i) // denom)
+
+    return {"community": community_alloc, "power": power_alloc, "portal": portal_alloc}
 
 
-def compute_estimate_for_wallet(conn: sqlite3.Connection, wallet_id: str, settings: Settings | None = None) -> Dict[str, int]:
+def airdrop_for_wallet(conn: sqlite3.Connection, wallet_id: str, settings: Settings | None = None) -> int:
     settings = settings or get_settings()
-    w = wallet_id.upper()
-
-    allocations = compute_allocations(conn, settings)
-
-    # trade-in is direct
-    tradein = conn.execute(
-        "SELECT COALESCE(SUM(qdoge_amount), 0) AS amt FROM tradeins WHERE wallet_id = ?",
-        (w,),
-    ).fetchone()[0]
-
-    return {
-        "community": int(allocations["community"].get(w, 0)),
-        "portal": int(allocations["portal"].get(w, 0)),
-        "power": int(allocations["power"].get(w, 0)),
-        "tradein": int(tradein or 0),
-    }
+    allocs = compute_allocations(conn, settings)
+    wallet = wallet_id.upper()
+    # wallet has exactly one role, but allocation maps are disjoint by role.
+    return int(allocs.get("community", {}).get(wallet, 0) + allocs.get("power", {}).get(wallet, 0) + allocs.get("portal", {}).get(wallet, 0))
 
 
-def build_legacy_res_rows(conn: sqlite3.Connection, settings: Settings | None = None) -> List[dict]:
-    """Return rows compatible with the existing FE table."""
+def recompute_and_store(conn: sqlite3.Connection, settings: Settings | None = None) -> None:
+    """Recompute allocations and persist res.airdrop_amt for registered wallets."""
     settings = settings or get_settings()
-    allocations = compute_allocations(conn, settings)
+    allocs = compute_allocations(conn, settings)
+    all_wallets = set(allocs.get("community", {}).keys()) | set(allocs.get("power", {}).keys()) | set(allocs.get("portal", {}).keys())
 
-    # Map of QEARN balances by wallet to avoid mixing with other asset amounts
-    qearn_map = {
-        str(r["wallet_id"]).upper(): int(r["qearn_amount"] or 0)
-        for r in conn.execute("SELECT wallet_id, qearn_amount FROM qearn_snapshot")
-    }
-
-    rows: List[dict] = []
-
-    # Community rows
-    comm_weights = get_weights_community(conn, settings)
-    for wallet, alloc in allocations["community"].items():
-        funded = conn.execute(
-            "SELECT COALESCE(SUM(amount_credited),0) FROM fundings WHERE wallet_id = ?",
-            (wallet,),
-        ).fetchone()[0]
-        qearn = conn.execute(
-            "SELECT COALESCE(qearn_amount,0) FROM qearn_snapshot WHERE wallet_id = ?",
-            (wallet,),
-        ).fetchone()[0]
-        rows.append(
-            {
-                "wallet_id": wallet,
-                "role": "user",
-                "qearn_bal": int(qearn or 0),
-                "invest_bal": int(funded or 0),
-                "airdrop_amt": int(alloc or 0),
-            }
-        )
-
-    # Portal rows
-    for wallet, alloc in allocations["portal"].items():
-        portal_amt = conn.execute(
-            "SELECT COALESCE((SELECT portal_amount FROM portal_snapshot WHERE wallet_id = ?), 0)",
-            (wallet,),
-        ).fetchone()[0]
-        qearn = qearn_map.get(wallet, 0)
-        rows.append(
-            {
-                "wallet_id": wallet,
-                "role": "portal",
-                "qearn_bal": int(qearn or 0),  # QEARN balance only
-                "invest_bal": 0,
-                "airdrop_amt": int(alloc or 0),
-            }
-        )
-
-    # Power rows
-    for wallet, alloc in allocations["power"].items():
-        qxmr_amt = conn.execute(
-            "SELECT COALESCE((SELECT qxmr_amount FROM power_snapshot WHERE wallet_id = ?), 0)",
-            (wallet,),
-        ).fetchone()[0]
-        qearn = qearn_map.get(wallet, 0)
-        rows.append(
-            {
-                "wallet_id": wallet,
-                "role": "power",
-                "qearn_bal": int(qearn or 0),  # QEARN balance only
-                "invest_bal": 0,
-                "airdrop_amt": int(alloc or 0),
-            }
-        )
-
-    # Stable ordering: airdrop desc
-    rows.sort(key=lambda r: (-int(r["airdrop_amt"]), r["wallet_id"], r["role"]))
-
-    # add `no` like legacy table
-    for idx, r in enumerate(rows, start=1):
-        r["no"] = idx
-    return rows
+    with conn:
+        for wallet in all_wallets:
+            amt = int(
+                allocs.get("community", {}).get(wallet, 0)
+                + allocs.get("power", {}).get(wallet, 0)
+                + allocs.get("portal", {}).get(wallet, 0)
+            )
+            conn.execute(
+                """
+                INSERT INTO res(wallet_id, airdrop_amt) VALUES(?, ?)
+                ON CONFLICT(wallet_id) DO UPDATE SET airdrop_amt=excluded.airdrop_amt, updated_at=datetime('now')
+                """,
+                (wallet, amt),
+            )

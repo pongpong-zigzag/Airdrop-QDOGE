@@ -87,12 +87,10 @@ export default function TradeinPage() {
       toast.loading("Sign in your wallet...", { id: "tradein" });
 
       const signed = await getSignedTx(tx);
-      let signedTx: Uint8Array = signed.tx;
+      const signedTx: Uint8Array = signed.tx;
 
       const broadcastResult = await broadcastTx(signedTx);
       const txId = broadcastResult.transactionId;
-
-      await recordTransaction({ sender: wallet.publicKey, recipient: BURN_ADDRESS, tx_hash: txId });
 
       toast.loading("Confirming trade-in on-chain...", { id: "tradein" });
       const result = await confirmTradein(wallet.publicKey, txId);

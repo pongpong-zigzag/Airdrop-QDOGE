@@ -1,20 +1,50 @@
 import { Res, User, TransactionRequest } from "./types";
 
+export type WalletSummary = {
+  wallet_id: string;
+  registered: boolean;
+  role?: string;
+  roles?: string[];
+  detail?: string;
+  balances?: {
+    qubic_bal?: number;
+    qubic_bal_capped?: number;
+    qearn_bal?: number;
+    portal_bal?: number;
+    qxmr_bal?: number;
+    qubic_cap?: number;
+  };
+  airdrop?: {
+    estimated?: number;
+    breakdown?: {
+      community?: number;
+      portal?: number;
+      power?: number;
+    };
+  };
+};
+
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
-export async function getWalletSummary(walletId: string) {
+export async function getWalletSummary(walletId: string): Promise<WalletSummary> {
   const res = await fetch(`${BASE_URL}/v1/wallet/${encodeURIComponent(walletId)}/summary`);
-  const data = await res.json().catch(() => ({}));
+  const data = (await res.json().catch(() => ({}))) as WalletSummary;
   if (!res.ok) throw new Error(data?.detail || "Failed to fetch wallet summary");
   return data;
 }
 
 export async function getUser(walletId: string): Promise<User> {
   const summary = await getWalletSummary(walletId);
+  const roles = Array.isArray(summary?.roles)
+    ? summary.roles
+    : typeof summary?.role === "string"
+      ? summary.role.split(",").map((r: string) => r.trim()).filter(Boolean)
+      : [];
   return {
     wallet_id: summary.wallet_id,
     access_info: summary.registered ? 1 : 0,
-    role: summary.role ?? "community",
+    role: roles[0] ?? summary.role ?? "community",
+    roles,
   } as User;
 }
 
@@ -80,16 +110,30 @@ export async function recordTransaction(adminApiKey: string, payload: Transactio
   return data;
 }
 
-export function summaryToRes(summary: any): Res {
+export function summaryToRes(summary: WalletSummary): Res {
   const balances = summary?.balances ?? {};
+  const roles: string[] = Array.isArray(summary?.roles)
+    ? summary.roles
+    : typeof summary?.role === "string"
+      ? summary.role.split(",").map((r: string) => r.trim()).filter(Boolean)
+      : [];
+  const breakdown = summary?.airdrop?.breakdown ?? {};
+  const community_amt = Number(breakdown?.community ?? 0);
+  const portal_amt = Number(breakdown?.portal ?? 0);
+  const power_amt = Number(breakdown?.power ?? 0);
+  const total = community_amt + portal_amt + power_amt;
   return {
     no: 1,
     wallet_id: summary?.wallet_id,
-    role: summary?.role ?? "community",
+    role: roles.join(", "),
+    roles,
+    community_amt,
+    portal_amt,
+    power_amt,
     qubic_bal: Number(balances?.qubic_bal ?? 0),
     qearn_bal: Number(balances?.qearn_bal ?? 0),
     portal_bal: Number(balances?.portal_bal ?? 0),
     qxmr_bal: Number(balances?.qxmr_bal ?? 0),
-    airdrop_amt: Number(summary?.airdrop?.estimated ?? 0),
+    airdrop_amt: Number(summary?.airdrop?.estimated ?? total),
   } as Res;
 }

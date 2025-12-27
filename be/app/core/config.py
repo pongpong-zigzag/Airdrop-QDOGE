@@ -154,7 +154,7 @@ def get_settings() -> Settings:
 
     # airdrop rules
     registration_amount_qu = _env_int("REGISTRATION_AMOUNT_QU", 100_000_000)
-    qubic_cap = _env_int("QUBIC_CAP", 10_000_000_000)
+    qubic_cap = _env_int("QUBIC_CAP", 20_000_000_000)
     portal_total_supply = _env_int("PORTAL_TOTAL_SUPPLY", 500_000)
 
     # addresses / contract info
@@ -172,8 +172,9 @@ def get_settings() -> Settings:
     qxmr_issuer_id = _env_str("QXMR_ISSUER_ID", "QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB").upper()
 
     portal_asset_name = _env_str("PORTAL_ASSET_NAME", "PORTAL").upper()
-    portal_asset_issuer = _env_str("PORTAL_ASSET_ISSUER", "").upper()
+    portal_asset_issuer = _env_str("PORTAL_ASSET_ISSUER", "IQUGNVFDQSLTXFJSIOPPNPZINSCDQTJVJWGRPWRTFFXMXSJIAASXOBFFBERK").upper()
     qearn_asset_name = _env_str("QEARN_ASSET_NAME", "QEARN").upper()
+    qearn_asset_issuer = _env_str("QEARN_ASSET_ISSUER", "JAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVKHO").upper()
 
     rpc_base_url = _env_str("RPC_BASE_URL", "https://rpc.qubic.org").rstrip("/")
     api_base_url = _env_str("API_BASE_URL", "https://dev01.qubic.org").rstrip("/")

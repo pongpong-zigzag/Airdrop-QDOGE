@@ -10,13 +10,44 @@ from app.core.config import get_settings
 from app.core.db import conn_ctx
 from app.core.qubic import asset_name_value, identity_to_public_key_bytes, normalize_identity
 from app.core.security import require_admin
-from app.services.airdrop import airdrop_for_wallet, recompute_and_store
+from app.services.airdrop import airdrop_breakdown_for_wallet, airdrop_for_wallet, recompute_and_store
 from app.services.assets import fetch_asset_units, fetch_portal_amount, fetch_qearn_amount, fetch_qxmr_amount
 from app.services.rpc import QubicRpcClient, RpcError
 
 router = APIRouter()
 
 CACHE_TTL_SECONDS = 120  # serve cached wallet snapshot if fresher than this
+
+# Role helpers
+ROLE_ORDER = ["admin", "power", "portal", "community"]
+
+
+def _normalize_roles(raw_roles) -> list[str]:
+    """Normalize to a de-duplicated, ordered role list."""
+    seen = []
+    for r in raw_roles or []:
+        r_norm = str(r or "").strip().lower()
+        if not r_norm or r_norm in seen:
+            continue
+        seen.append(r_norm)
+    # apply deterministic ordering
+    ordered = [r for r in ROLE_ORDER if r in seen]
+    extras = sorted([r for r in seen if r not in ROLE_ORDER])
+    out = ordered + extras
+    if "community" not in out:
+        out.append("community")
+    return out or ["community"]
+
+
+def _parse_roles(role_field: str | None) -> list[str]:
+    if role_field is None or str(role_field).strip() == "":
+        return ["community"]
+    parts = str(role_field).split(",")
+    return _normalize_roles(parts)
+
+
+def _format_roles(roles: list[str]) -> str:
+    return ",".join(_normalize_roles(roles))
 
 
 def _ensure_user(conn, wallet: str, settings) -> None:
@@ -40,14 +71,16 @@ def _ensure_user(conn, wallet: str, settings) -> None:
         )
 
 
-def _resolve_role(*, wallet: str, settings, portal_bal: int) -> str:
+def _resolve_roles(*, wallet: str, settings, portal_bal: int) -> list[str]:
+    """Default role is community; add portal/power when eligible. Admin is exclusive."""
     if getattr(settings, "admin_wallet_id", "") and wallet == settings.admin_wallet_id:
-        return "admin"
-    if wallet in settings.power_users:
-        return "power"
+        return ["admin"]
+    roles: list[str] = ["community"]
     if int(portal_bal) > 0:
-        return "portal"
-    return "community"
+        roles.append("portal")
+    if wallet in settings.power_users:
+        roles.append("power")
+    return _normalize_roles(roles)
 
 
 @router.get("/v1/config")
@@ -115,13 +148,16 @@ async def wallet_summary(wallet_id: str):
                 age = CACHE_TTL_SECONDS + 1
             if age <= CACHE_TTL_SECONDS:
                 registered = bool(cached["access_info"] == 1)
-                role_cached = str(cached["role"] or "community").lower()
+                roles = _parse_roles(cached["role"])
+                qubic_bal_raw = int(cached["qubic_bal"] or 0)
                 return {
                     "wallet_id": wallet,
                     "registered": registered,
-                    "role": role_cached,
+                    "role": _format_roles(roles),
+                    "roles": roles,
                     "balances": {
-                        "qubic_bal": int(cached["qubic_bal"] or 0),
+                        "qubic_bal": qubic_bal_raw,
+                        "qubic_bal_capped": min(max(0, qubic_bal_raw), int(settings.qubic_cap)),
                         "qearn_bal": int(cached["qearn_bal"] or 0),
                         "portal_bal": int(cached["portal_bal"] or 0),
                         "qxmr_bal": int(cached["qxmr_bal"] or 0),
@@ -150,8 +186,10 @@ async def wallet_summary(wallet_id: str):
         qubic_task, qearn_task, portal_task, qxmr_task
     )
 
-    qubic_bal = int(min(max(0, int(qubic_bal_raw)), int(settings.qubic_cap)))
-    role = _resolve_role(wallet=wallet, settings=settings, portal_bal=int(portal_bal))
+    qubic_bal_raw = int(max(0, int(qubic_bal_raw)))
+    qubic_bal_capped = int(min(qubic_bal_raw, int(settings.qubic_cap)))
+    roles = _resolve_roles(wallet=wallet, settings=settings, portal_bal=int(portal_bal))
+    roles_csv = _format_roles(roles)
 
     with conn_ctx() as conn:
         _ensure_user(conn, wallet, settings)
@@ -161,7 +199,7 @@ async def wallet_summary(wallet_id: str):
         # persist latest snapshot
         conn.execute(
             "UPDATE users SET role = ?, updated_at = datetime('now') WHERE wallet_id = ?",
-            (role, wallet),
+            (roles_csv, wallet),
         )
         conn.execute(
             """
@@ -174,11 +212,12 @@ async def wallet_summary(wallet_id: str):
               qxmr_bal=excluded.qxmr_bal,
               updated_at=datetime('now')
             """,
-            (wallet, qubic_bal, int(qearn_bal), int(portal_bal), int(qxmr_bal)),
+            (wallet, qubic_bal_raw, int(qearn_bal), int(portal_bal), int(qxmr_bal)),
         )
 
         # compute estimate based on current DB snapshots (registered wallets only)
-        est = int(airdrop_for_wallet(conn, wallet, settings)) if registered else 0
+        breakdown = airdrop_breakdown_for_wallet(conn, wallet, settings) if registered else {"community": 0, "portal": 0, "power": 0}
+        est = int(sum(breakdown.values())) if registered else 0
         conn.execute(
             "UPDATE res SET airdrop_amt=?, updated_at=datetime('now') WHERE wallet_id = ?",
             (est, wallet),
@@ -188,17 +227,17 @@ async def wallet_summary(wallet_id: str):
     return {
         "wallet_id": wallet,
         "registered": registered,
-        "role": role,
+        "role": roles_csv,
+        "roles": roles,
         "balances": {
-            "qubic_bal": qubic_bal,
+            "qubic_bal": qubic_bal_raw,
+            "qubic_bal_capped": qubic_bal_capped,
             "qearn_bal": int(qearn_bal),
             "portal_bal": int(portal_bal),
             "qxmr_bal": int(qxmr_bal),
             "qubic_cap": int(settings.qubic_cap),
         },
-        "airdrop": {
-            "estimated": est,
-        },
+        "airdrop": {"estimated": est, "breakdown": breakdown},
     }
 
 

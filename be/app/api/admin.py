@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from app.core.config import get_settings
 from app.core.db import conn_ctx
 from app.core.security import require_admin
-from app.services.airdrop import ensure_airdrop_allocations_current, recompute_and_store
+from app.services.airdrop import compute_allocations, recompute_and_store
 
 router = APIRouter(prefix="/v1/admin", dependencies=[Depends(require_admin)])
 
@@ -55,34 +55,26 @@ def list_res():
     """Admin: full res table with per-role airdrop breakdown."""
     settings = get_settings()
     with conn_ctx() as conn:
-        ensure_airdrop_allocations_current(conn, settings)
+        allocs = compute_allocations(conn, settings)
         rows = conn.execute(
             """
-            SELECT r.wallet_id,
-                   u.role,
-                   r.qubic_bal,
-                   r.qearn_bal,
-                   r.portal_bal,
-                   r.qxmr_bal,
-                   r.created_at,
-                   r.updated_at,
-                   COALESCE(a.community_amt, 0) AS community_amt,
-                   COALESCE(a.portal_amt, 0) AS portal_amt,
-                   COALESCE(a.power_amt, 0) AS power_amt
+            SELECT r.wallet_id, u.role, r.qubic_bal, r.qearn_bal, r.portal_bal, r.qxmr_bal, r.created_at, r.updated_at
             FROM res r
             LEFT JOIN users u ON u.wallet_id = r.wallet_id
-            LEFT JOIN airdrop_allocations a ON a.wallet_id = r.wallet_id
             ORDER BY r.wallet_id ASC
             """
         ).fetchall()
+
+    def amt(wallet: str, role: str) -> int:
+        return int(allocs.get(role, {}).get(wallet, 0))
 
     out = []
     for idx, r in enumerate(rows, start=1):
         wallet_id = str(r[0]).upper()
         roles = _parse_roles(r[1])
-        community_amt = int(r["community_amt"] or 0)
-        portal_amt = int(r["portal_amt"] or 0)
-        power_amt = int(r["power_amt"] or 0)
+        community_amt = amt(wallet_id, "community")
+        portal_amt = amt(wallet_id, "portal")
+        power_amt = amt(wallet_id, "power")
         total_amt = community_amt + portal_amt + power_amt
         out.append(
             {
@@ -115,18 +107,10 @@ def allocations():
     """Admin: summarize allocations per role based on current snapshots."""
     settings = get_settings()
     with conn_ctx() as conn:
-        ensure_airdrop_allocations_current(conn, settings)
-        rows = conn.execute(
-            "SELECT wallet_id, community_amt, portal_amt, power_amt FROM airdrop_allocations"
-        ).fetchall()
+        allocs = compute_allocations(conn, settings)
 
-    def summarize(rows, field: str):
-        items = [
-            (str(r["wallet_id"]).upper(), int(r[field] or 0))
-            for r in rows
-            if int(r[field] or 0) > 0
-        ]
-        items.sort(key=lambda x: (-x[1], x[0]))
+    def summarize(d: dict[str, int]):
+        items = sorted(d.items(), key=lambda x: (-x[1], x[0]))
         return {
             "wallets": len(items),
             "total": sum(v for _, v in items),
@@ -139,9 +123,9 @@ def allocations():
             "portal": int(settings.portal_pool),
             "power": int(settings.power_pool),
         },
-        "community": summarize(rows, "community_amt"),
-        "portal": summarize(rows, "portal_amt"),
-        "power": summarize(rows, "power_amt"),
+        "community": summarize(allocs.get("community", {})),
+        "portal": summarize(allocs.get("portal", {})),
+        "power": summarize(allocs.get("power", {})),
     }
 
 

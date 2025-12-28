@@ -61,18 +61,13 @@ def init_db() -> None:
         # Fresh install: create v3 schema directly.
         if current == 0:
             _migration_3(conn)
-            _migration_4(conn)
-            conn.execute("PRAGMA user_version = 4;")
+            conn.execute("PRAGMA user_version = 3;")
             return
 
         # Upgrade from any older schema to v3.
         if current < 3:
             _migration_3(conn)
             conn.execute("PRAGMA user_version = 3;")
-
-        if current < 4:
-            _migration_4(conn)
-            conn.execute("PRAGMA user_version = 4;")
 
 
 def _migration_3(conn: sqlite3.Connection) -> None:
@@ -195,31 +190,3 @@ def _migration_3(conn: sqlite3.Connection) -> None:
         for tbl in ("registrations", "fundings", "qearn_snapshot", "portal_snapshot", "power_snapshot"):
             if _table_exists(conn, tbl):
                 conn.execute(f"DROP TABLE {tbl};")
-
-
-def _migration_4(conn: sqlite3.Connection) -> None:
-    """Schema v4: track derived airdrop allocations + state."""
-    with conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS airdrop_allocations (
-              wallet_id TEXT PRIMARY KEY,
-              community_amt INTEGER NOT NULL DEFAULT 0,
-              portal_amt INTEGER NOT NULL DEFAULT 0,
-              power_amt INTEGER NOT NULL DEFAULT 0,
-              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-              FOREIGN KEY(wallet_id) REFERENCES users(wallet_id) ON DELETE CASCADE
-            );
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS airdrop_state (
-              id INTEGER PRIMARY KEY CHECK (id = 1),
-              res_version INTEGER NOT NULL DEFAULT 0,
-              alloc_version INTEGER NOT NULL DEFAULT 0,
-              updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            """
-        )
-        conn.execute("INSERT OR IGNORE INTO airdrop_state(id) VALUES (1);")

@@ -10,7 +10,7 @@ from app.core.config import get_settings
 from app.core.db import conn_ctx
 from app.core.qubic import asset_name_value, identity_to_public_key_bytes, normalize_identity
 from app.core.security import require_admin
-from app.services.airdrop import airdrop_breakdown_for_wallet, mark_airdrop_dirty
+from app.services.airdrop import airdrop_breakdown_for_wallet, airdrop_for_wallet, recompute_and_store
 from app.services.assets import fetch_asset_units, fetch_portal_amount, fetch_qearn_amount, fetch_qxmr_amount
 from app.services.rpc import QubicRpcClient, RpcError
 
@@ -135,15 +135,9 @@ async def wallet_summary(wallet_id: str, fresh: bool = False):
                        r.portal_bal,
                        r.qxmr_bal,
                        r.airdrop_amt,
-                       r.updated_at,
-                       COALESCE(a.community_amt, 0) AS community_amt,
-                       COALESCE(a.portal_amt, 0) AS portal_amt,
-                       COALESCE(a.power_amt, 0) AS power_amt,
-                       a.updated_at AS airdrop_updated_at,
-                       CASE WHEN a.wallet_id IS NULL THEN 0 ELSE 1 END AS has_airdrop_breakdown
+                       r.updated_at
                 FROM users u
                 LEFT JOIN res r ON r.wallet_id = u.wallet_id
-                LEFT JOIN airdrop_allocations a ON a.wallet_id = u.wallet_id
                 WHERE u.wallet_id = ?
                 """,
                 (wallet,),
@@ -158,13 +152,6 @@ async def wallet_summary(wallet_id: str, fresh: bool = False):
                     registered = bool(cached["access_info"] == 1)
                     roles = _parse_roles(cached["role"])
                     qubic_bal_raw = int(cached["qubic_bal"] or 0)
-                    community_amt = int(cached["community_amt"] or 0)
-                    portal_amt = int(cached["portal_amt"] or 0)
-                    power_amt = int(cached["power_amt"] or 0)
-                    has_breakdown = bool(cached["has_airdrop_breakdown"])
-                    airdrop_est = (
-                        community_amt + portal_amt + power_amt if has_breakdown else int(cached["airdrop_amt"] or 0)
-                    )
                     return {
                         "wallet_id": wallet,
                         "registered": registered,
@@ -179,12 +166,7 @@ async def wallet_summary(wallet_id: str, fresh: bool = False):
                             "qubic_cap": int(settings.qubic_cap),
                         },
                         "airdrop": {
-                            "estimated": airdrop_est,
-                            "breakdown": {
-                                "community": community_amt,
-                                "portal": portal_amt,
-                                "power": power_amt,
-                            },
+                            "estimated": int(cached["airdrop_amt"] or 0),
                         },
                     }
 
@@ -216,18 +198,6 @@ async def wallet_summary(wallet_id: str, fresh: bool = False):
         u = conn.execute("SELECT access_info FROM users WHERE wallet_id = ?", (wallet,)).fetchone()
         registered = bool(u and int(u[0] or 0) == 1)
 
-        existing_snapshot = conn.execute(
-            "SELECT qubic_bal, qearn_bal, portal_bal, qxmr_bal FROM res WHERE wallet_id = ?",
-            (wallet,),
-        ).fetchone()
-        snapshot_changed = (
-            not existing_snapshot
-            or int(existing_snapshot["qubic_bal"] or 0) != qubic_bal_raw
-            or int(existing_snapshot["qearn_bal"] or 0) != int(qearn_bal)
-            or int(existing_snapshot["portal_bal"] or 0) != int(portal_bal)
-            or int(existing_snapshot["qxmr_bal"] or 0) != int(qxmr_bal)
-        )
-
         # persist latest snapshot
         conn.execute(
             "UPDATE users SET role = ?, updated_at = datetime('now') WHERE wallet_id = ?",
@@ -247,18 +217,13 @@ async def wallet_summary(wallet_id: str, fresh: bool = False):
             (wallet, qubic_bal_raw, int(qearn_bal), int(portal_bal), int(qxmr_bal)),
         )
 
-        if registered and snapshot_changed:
-            mark_airdrop_dirty(conn)
-
         # compute estimate based on current DB snapshots (registered wallets only)
-        breakdown = (
-            airdrop_breakdown_for_wallet(conn, wallet, settings)
-            if registered
-            else {"community": 0, "portal": 0, "power": 0}
-        )
+        breakdown = airdrop_breakdown_for_wallet(conn, wallet, settings) if registered else {"community": 0, "portal": 0, "power": 0}
         est = int(sum(breakdown.values())) if registered else 0
-        conn.execute("INSERT OR IGNORE INTO res(wallet_id) VALUES (?)", (wallet,))
-        conn.execute("UPDATE res SET airdrop_amt=? WHERE wallet_id = ?", (est, wallet))
+        conn.execute(
+            "UPDATE res SET airdrop_amt=?, updated_at=datetime('now') WHERE wallet_id = ?",
+            (est, wallet),
+        )
         conn.commit()
 
     return {
@@ -319,7 +284,6 @@ async def confirm_registration(req: ConfirmTxRequest):
             "UPDATE users SET access_info = 1, updated_at = datetime('now') WHERE wallet_id = ?",
             (wallet,),
         )
-        mark_airdrop_dirty(conn)
 
         # log tx
         conn.execute(

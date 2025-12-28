@@ -332,7 +332,7 @@ export default function AirdropPage() {
       <div className="flex justify-end gap-2">
         {user && user.access_info === 0 && (
           <Button size="lg" className="mt-2" onClick={() => setShowRegister(true)}>
-            Register (100,000,000 QU)
+            Register (1,000,000 QU)
           </Button>
         )}
       </div>

@@ -9,7 +9,7 @@ import { toast } from "react-hot-toast";
 import { useQubicConnect } from "@/components/connect/QubicConnectContext";
 import { broadcastTx, fetchOwnedAssets } from "@/services/rpc.service";
 import { createAssetTransferTransaction } from "@/services/qx.service";
-import { confirmTradein, recordTransaction } from "@/lib/api";
+import { confirmTradein } from "@/lib/api";
 import { ownedAssetsAtom } from "@/store/assets";
 import { useAtom } from "jotai";
 
@@ -54,7 +54,7 @@ export default function TradeinPage() {
     return Number.isFinite(n) ? Math.floor(n) : 0;
   }, [amount]);
 
-  const expectedQdoge = useMemo(() => parsed / RATIO, [parsed]);
+  const expectedQdoge = useMemo(() => Math.floor(parsed / RATIO).toString(), [parsed]);
 
   const handleTradein = async () => {
     if (!isOpen) {

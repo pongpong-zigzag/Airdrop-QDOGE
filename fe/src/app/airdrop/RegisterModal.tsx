@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQubicConnect } from "@/components/connect/QubicConnectContext";
 
-const REGISTRATION_FEE = 100_000_000; // 100,000,000 QU
+const REGISTRATION_FEE = 1_000_000; // 100,000,000 QU
 
 type Props = {
   open: boolean;

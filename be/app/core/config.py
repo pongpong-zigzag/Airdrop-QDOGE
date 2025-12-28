@@ -153,7 +153,7 @@ def get_settings() -> Settings:
     tradein_ratio_qdoge_per_qxmr = _env_float("TRADEIN_RATIO_QDOGE_PER_QXMR", 100.0)
 
     # airdrop rules
-    registration_amount_qu = _env_int("REGISTRATION_AMOUNT_QU", 100_000_000)
+    registration_amount_qu = _env_int("REGISTRATION_AMOUNT_QU", 1_000_000)
     qubic_cap = _env_int("QUBIC_CAP", 20_000_000_000)
     portal_total_supply = _env_int("PORTAL_TOTAL_SUPPLY", 500_000)
 

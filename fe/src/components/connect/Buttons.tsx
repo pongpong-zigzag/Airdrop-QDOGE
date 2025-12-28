@@ -34,7 +34,21 @@ export const ReconnectButton = (props: any) => {
   );
 };
 
-export const HeaderButtons = ({ state, onConnectClick }: { state: MetamaskState; onConnectClick(): unknown }) => {
+interface HeaderButtonsProps {
+  state: MetamaskState;
+  onConnectClick(): unknown;
+  isWalletConnected: boolean;
+}
+
+export const HeaderButtons = ({ state, onConnectClick, isWalletConnected }: HeaderButtonsProps) => {
+  if (isWalletConnected) {
+    return (
+      <Button disabled>
+        <MetaMaskLogo /> Connected
+      </Button>
+    );
+  }
+
   if (!state.snapsDetected && !state.installedSnap) {
     return <InstallButton />;
   }
@@ -47,9 +61,5 @@ export const HeaderButtons = ({ state, onConnectClick }: { state: MetamaskState;
     return <ReconnectButton onClick={onConnectClick} />;
   }
 
-  return (
-    <Button disabled>
-      <MetaMaskLogo /> Connected
-    </Button>
-  );
+  return <ConnectButton onClick={onConnectClick} isFlask={state.isFlask} />;
 };

@@ -13,7 +13,7 @@ interface TxPayProps {
   onPurchaseComplete?: () => void;
 }
 
-const REGISTRATION_FEE = 100_000_000; // 100,000,000 QU
+const REGISTRATION_FEE = 1_000_000; // 100,000,000 QU
 
 const REGISTRATION_ADDRESS =
   process.env.NEXT_PUBLIC_REGISTRATION_ADDRESS ||

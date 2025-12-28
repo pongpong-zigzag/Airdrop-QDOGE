@@ -12,10 +12,9 @@ import { DEFAULT_TX_SIZE } from "@/constants";
 import { toast } from "react-hot-toast";
 import { getSnap } from "./utils/snap";
 import { connectSnap } from "./utils/snap";
-// @ts-ignore
+// @ts-expect-error: qubic vault library does not ship types
 import { QubicVault } from "@qubic-lib/qubic-ts-vault-library";
-import { useAtom } from "jotai";
-// import { balancesAtom } from "@/store/balances";
+
 
 const WALLET_STORAGE_KEY = "wallet";
 
@@ -50,7 +49,7 @@ export function QubicConnectProvider({ children }: QubicConnectProviderProps) {
   const [connected, setConnected] = useState<boolean>(false);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [showConnectModal, setShowConnectModal] = useState<boolean>(false);
-  const { signTransaction } = useWalletConnect();
+  const { signTransaction, disconnect: disconnectWalletConnect } = useWalletConnect();
   const [state, dispatch] = useContext(MetaMaskContext);
   // const [, setBalances] = useAtom(balancesAtom);
 
@@ -63,9 +62,15 @@ export function QubicConnectProvider({ children }: QubicConnectProviderProps) {
   };
 
   const disconnect = (): void => {
+    const connectType = wallet?.connectType;
     localStorage.removeItem(WALLET_STORAGE_KEY);
     setWallet(null);
     setConnected(false);
+    if (connectType === "walletconnect") {
+      disconnectWalletConnect().catch((error) =>
+        console.error("Failed to disconnect WalletConnect session", error),
+      );
+    }
     // setBalances([]);
   };
 

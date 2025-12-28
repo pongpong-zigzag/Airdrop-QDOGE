@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Tuple
 
 from app.core.config import Settings, get_settings
+
+STATE_ROW_ID = 1
 
 
 @dataclass(frozen=True)
@@ -110,20 +112,10 @@ def _fetch_registered_snapshots(conn: sqlite3.Connection, settings: Settings) ->
     return out
 
 
-def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = None) -> dict[str, dict[str, int]]:
-    """Compute airdrop allocation maps per role.
-
-    Roles:
-      - community: weight = min(qubic_bal, qubic_cap) + qearn_bal
-      - power:     weight = qxmr_bal
-      - portal:    allocation = floor(portal_pool * portal_bal / portal_total_supply)
-
-    Note: portal pool uses the fixed denominator (portal_total_supply) per spec.
-    This can leave some tokens undistributed if not all portal units are held by registered users.
-    """
-    settings = settings or get_settings()
-    snaps = _fetch_registered_snapshots(conn, settings)
-
+def _compute_allocations_from_snapshots(
+    snaps: list[WalletSnapshot], settings: Settings
+) -> dict[str, dict[str, int]]:
+    """Helper that derives allocation maps from a prepared snapshot list."""
     community_weights: Dict[str, int] = {}
     power_weights: Dict[str, int] = {}
     portal_balances: Dict[str, int] = {}
@@ -152,14 +144,16 @@ def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = No
     return {"community": community_alloc, "power": power_alloc, "portal": portal_alloc}
 
 
-def airdrop_for_wallet(conn: sqlite3.Connection, wallet_id: str, settings: Settings | None = None) -> int:
+def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = None) -> dict[str, dict[str, int]]:
+    """Compute airdrop allocation maps per role."""
     settings = settings or get_settings()
-    if wallet_id == settings.admin_wallet_id:
-        return 0
-    allocs = compute_allocations(conn, settings)
-    wallet = wallet_id.upper()
-    # Wallets may qualify for multiple roles; add all allocations together.
-    return int(allocs.get("community", {}).get(wallet, 0) + allocs.get("power", {}).get(wallet, 0) + allocs.get("portal", {}).get(wallet, 0))
+    snaps = _fetch_registered_snapshots(conn, settings)
+    return _compute_allocations_from_snapshots(snaps, settings)
+
+
+def airdrop_for_wallet(conn: sqlite3.Connection, wallet_id: str, settings: Settings | None = None) -> int:
+    breakdown = airdrop_breakdown_for_wallet(conn, wallet_id, settings)
+    return int(sum(breakdown.values()))
 
 
 def airdrop_breakdown_for_wallet(conn: sqlite3.Connection, wallet_id: str, settings: Settings | None = None) -> dict[str, int]:
@@ -168,31 +162,109 @@ def airdrop_breakdown_for_wallet(conn: sqlite3.Connection, wallet_id: str, setti
     wallet = wallet_id.upper()
     if wallet == settings.admin_wallet_id:
         return {"community": 0, "portal": 0, "power": 0}
-    allocs = compute_allocations(conn, settings)
+    ensure_airdrop_allocations_current(conn, settings)
+    row = conn.execute(
+        """
+        SELECT COALESCE(community_amt, 0) AS community_amt,
+               COALESCE(portal_amt, 0) AS portal_amt,
+               COALESCE(power_amt, 0) AS power_amt
+        FROM airdrop_allocations
+        WHERE wallet_id = ?
+        """,
+        (wallet,),
+    ).fetchone()
+    if not row:
+        return {"community": 0, "portal": 0, "power": 0}
     return {
-        "community": int(allocs.get("community", {}).get(wallet, 0)),
-        "portal": int(allocs.get("portal", {}).get(wallet, 0)),
-        "power": int(allocs.get("power", {}).get(wallet, 0)),
+        "community": int(row["community_amt"] or 0),
+        "portal": int(row["portal_amt"] or 0),
+        "power": int(row["power_amt"] or 0),
     }
 
 
 def recompute_and_store(conn: sqlite3.Connection, settings: Settings | None = None) -> None:
     """Recompute allocations and persist res.airdrop_amt for registered wallets."""
     settings = settings or get_settings()
-    allocs = compute_allocations(conn, settings)
-    all_wallets = set(allocs.get("community", {}).keys()) | set(allocs.get("power", {}).keys()) | set(allocs.get("portal", {}).keys())
+    snaps = _fetch_registered_snapshots(conn, settings)
+    allocs = _compute_allocations_from_snapshots(snaps, settings)
+    registered_wallets = [snap.wallet_id for snap in snaps]
 
     with conn:
-        for wallet in all_wallets:
-            amt = int(
-                allocs.get("community", {}).get(wallet, 0)
-                + allocs.get("power", {}).get(wallet, 0)
-                + allocs.get("portal", {}).get(wallet, 0)
-            )
+        for wallet in registered_wallets:
+            community = int(allocs.get("community", {}).get(wallet, 0))
+            portal = int(allocs.get("portal", {}).get(wallet, 0))
+            power = int(allocs.get("power", {}).get(wallet, 0))
+            total = community + portal + power
+
             conn.execute(
                 """
-                INSERT INTO res(wallet_id, airdrop_amt) VALUES(?, ?)
-                ON CONFLICT(wallet_id) DO UPDATE SET airdrop_amt=excluded.airdrop_amt, updated_at=datetime('now')
+                INSERT INTO airdrop_allocations(wallet_id, community_amt, portal_amt, power_amt, updated_at)
+                VALUES(?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(wallet_id) DO UPDATE SET
+                  community_amt=excluded.community_amt,
+                  portal_amt=excluded.portal_amt,
+                  power_amt=excluded.power_amt,
+                  updated_at=datetime('now')
                 """,
-                (wallet, amt),
+                (wallet, community, portal, power),
             )
+
+            conn.execute("INSERT OR IGNORE INTO res(wallet_id) VALUES (?)", (wallet,))
+            conn.execute(
+                """
+                UPDATE res
+                SET airdrop_amt = ?
+                WHERE wallet_id = ?
+                """,
+                (total, wallet),
+            )
+
+        if registered_wallets:
+            placeholders = ",".join("?" for _ in registered_wallets)
+            conn.execute(
+                f"DELETE FROM airdrop_allocations WHERE wallet_id NOT IN ({placeholders})",
+                registered_wallets,
+            )
+        else:
+            conn.execute("DELETE FROM airdrop_allocations")
+
+        _ensure_airdrop_state_row(conn)
+        conn.execute(
+            """
+            UPDATE airdrop_state
+            SET alloc_version = res_version, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (STATE_ROW_ID,),
+        )
+
+
+def _ensure_airdrop_state_row(conn: sqlite3.Connection) -> None:
+    conn.execute("INSERT OR IGNORE INTO airdrop_state(id) VALUES (?)", (STATE_ROW_ID,))
+
+
+def mark_airdrop_dirty(conn: sqlite3.Connection) -> None:
+    """Mark allocation cache as stale after snapshot changes."""
+    _ensure_airdrop_state_row(conn)
+    conn.execute(
+        """
+        UPDATE airdrop_state
+        SET res_version = res_version + 1, updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (STATE_ROW_ID,),
+    )
+
+
+def ensure_airdrop_allocations_current(conn: sqlite3.Connection, settings: Settings | None = None) -> None:
+    """Recompute allocations only when snapshot data changed."""
+    _ensure_airdrop_state_row(conn)
+    row = conn.execute(
+        "SELECT res_version, alloc_version FROM airdrop_state WHERE id = ?",
+        (STATE_ROW_ID,),
+    ).fetchone()
+    res_version = int(row["res_version"] or 0) if row else 0
+    alloc_version = int(row["alloc_version"] or 0) if row else 0
+    if alloc_version >= res_version:
+        return
+    recompute_and_store(conn, settings or get_settings())

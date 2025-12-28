@@ -16,6 +16,8 @@ def _parse_roles(role_field: str | None) -> list[str]:
     if role_field is None or str(role_field).strip() == "":
         return ["community"]
     parts = [p.strip().lower() for p in str(role_field).split(",") if p.strip()]
+    if "admin" in parts:
+        return ["admin"]
     ordered = [r for r in ROLE_ORDER if r in parts]
     extras = sorted([r for r in parts if r not in ROLE_ORDER])
     out = ordered + extras

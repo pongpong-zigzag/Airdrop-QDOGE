@@ -31,6 +31,8 @@ def _normalize_roles(raw_roles) -> list[str]:
         if not r_norm or r_norm in seen:
             continue
         seen.append(r_norm)
+    if "admin" in seen:
+        return ["admin"]
     # apply deterministic ordering
     ordered = [r for r in ROLE_ORDER if r in seen]
     extras = sorted([r for r in seen if r not in ROLE_ORDER])

@@ -145,12 +145,12 @@ const WalletSummaryGrid = React.memo(
       {
         label: "QEARN",
         value: summary?.balances?.qearn_bal,
-        valueClass: "text-primary",
+        valueClass: "text-text-secondary",
       },
       {
         label: "QUBIC",
         value: summary?.balances?.qubic_bal,
-        valueClass: "text-secondary-foreground",
+        valueClass: "text-primary",
       },
       {
         label: "PORTAL",
@@ -163,43 +163,66 @@ const WalletSummaryGrid = React.memo(
         valueClass: "text-muted-foreground",
       },
     ];
+    const [qearnCard, qubicCard, portalCard, qxmrCard] = balanceCards;
+    const renderBalanceCard = (card?: (typeof balanceCards)[number]) =>
+      card ? (
+        <div className={statCardClasses}>
+          <p className={labelClasses}>{card.label}</p>
+          <p className={`mt-2 text-2xl font-semibold tabular-nums ${card.valueClass}`}>
+            {formatNumber(card.value)}
+          </p>
+          <p className="text-xs text-muted-foreground">Live snapshot</p>
+        </div>
+      ) : null;
 
     return (
       <div className="rounded-2xl border border-border bg-card p-5 shadow-2xl shadow-black/10 dark:shadow-black/40">
         <div className="flex flex-col gap-5">
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className={sectionBaseClasses}>
-              <p className={labelClasses}>Registration</p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Badge
-                  variant="secondary"
-                  className={`px-3 py-1 text-sm font-semibold ${
-                    summary.registered
-                      ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/40"
-                      : "bg-amber-500/10 text-amber-200 border border-amber-500/40"
-                  }`}
-                >
-                  {summary.registered ? "Registered" : "Not registered"}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  {summary.registered ? "Eligible for reward claims" : "Finish registration to unlock drops."}
-                </span>
+          <div className="grid gap-4 lg:grid-rows-1 lg:grid-flow-col">
+            <div className="space-y-4 lg:col-span-3">
+              <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-3">
+                <div className={sectionBaseClasses}>
+                  <p className={labelClasses}>Registration</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="secondary"
+                      className={`px-3 py-1 text-sm font-semibold ${
+                        summary.registered
+                          ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/40"
+                          : "bg-amber-500/10 text-amber-200 border border-amber-500/40"
+                      }`}
+                    >
+                      {summary.registered ? "Registered" : "Not registered"}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {summary.registered ? "Eligible for reward claims" : "Finish registration to unlock drops."}
+                    </span>
+                  </div>
+                </div>
+
+                <div className={sectionBaseClasses}>
+                  <p className={labelClasses}>Role</p>
+                  <div className="mt-3">
+                    <RoleBadges roles={displayRoles} />
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    {displayRoles.length > 1
+                      ? "Multi-tier access boosts your allocation."
+                      : `You are currently in the ${ROLE_META[displayRoles[0]].label} tier.`}
+                  </p>
+                </div>
+
+                {renderBalanceCard(qubicCard)}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-3">
+                {renderBalanceCard(qearnCard)}
+                {renderBalanceCard(portalCard)}
+                {renderBalanceCard(qxmrCard)}
               </div>
             </div>
 
-            <div className={sectionBaseClasses}>
-              <p className={labelClasses}>Role</p>
-              <div className="mt-3">
-                <RoleBadges roles={displayRoles} />
-              </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                {displayRoles.length > 1
-                  ? "Multi-tier access boosts your allocation."
-                  : `You are currently in the ${ROLE_META[displayRoles[0]].label} tier.`}
-              </p>
-            </div>
-
-            <div className={sectionBaseClasses}>
+            <div className={`${sectionBaseClasses} lg:col-span-1`}>
               <p className={labelClasses}>Total airdrop allocation</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
                 {typeof totalAirdrop === "number" && totalAirdrop > 0 ? formatNumber(totalAirdrop) : "Unavailable"}
@@ -231,16 +254,6 @@ const WalletSummaryGrid = React.memo(
                 </div>
               )}
             </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {balanceCards.map((card) => (
-              <div key={card.label} className={statCardClasses}>
-                <p className={labelClasses}>{card.label}</p>
-                <p className={`mt-2 text-2xl font-semibold tabular-nums ${card.valueClass}`}>{formatNumber(card.value)}</p>
-                <p className="text-xs text-muted-foreground">Live snapshot</p>
-              </div>
-            ))}
           </div>
         </div>
       </div>

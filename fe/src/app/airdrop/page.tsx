@@ -38,9 +38,9 @@ const ROLE_META: Record<DisplayRole, { label: string; className: string }> = {
 };
 
 const ALLOCATION_ACCENTS: Record<RoleKey, string> = {
-  community: "bg-emerald-400",
-  portal: "bg-cyan-400",
-  power: "bg-indigo-400",
+  community: "bg-primary",
+  portal: "bg-secondary",
+  power: "bg-accent",
 };
 
 const formatNumber = (value?: number | string | null) => {
@@ -135,58 +135,60 @@ const WalletSummaryGrid = React.memo(
       })
       .filter(Boolean) as { role: RoleKey; label: string; amount: number; percent: number | null }[];
 
+    const sectionBaseClasses =
+      "rounded-xl border border-border bg-card p-4 shadow-inner shadow-black/5 dark:shadow-black/30";
+    const statCardClasses =
+      "rounded-xl border border-border bg-card p-4 shadow-lg shadow-black/5 dark:shadow-black/30";
+    const labelClasses = "text-xs font-semibold uppercase tracking-wide text-muted-foreground";
+
     const balanceCards = [
       {
         label: "QEARN",
         value: summary?.balances?.qearn_bal,
-        bg: "from-emerald-500/15 via-emerald-500/5 to-transparent",
-        text: "text-emerald-100",
+        valueClass: "text-primary",
       },
       {
         label: "QUBIC",
         value: summary?.balances?.qubic_bal,
-        bg: "from-violet-500/15 via-violet-500/5 to-transparent",
-        text: "text-violet-100",
+        valueClass: "text-secondary-foreground",
       },
       {
         label: "PORTAL",
         value: summary?.balances?.portal_bal,
-        bg: "from-sky-500/15 via-sky-500/5 to-transparent",
-        text: "text-sky-100",
+        valueClass: "text-accent-foreground",
       },
       {
         label: "QXMR",
         value: summary?.balances?.qxmr_bal,
-        bg: "from-fuchsia-500/15 via-fuchsia-500/5 to-transparent",
-        text: "text-fuchsia-100",
+        valueClass: "text-muted-foreground",
       },
     ];
 
     return (
-      <div className="rounded-2xl border border-white/5 bg-linear-to-br from-slate-950 via-slate-900 to-slate-950/40 p-6 shadow-2xl shadow-black/40 ring-1 ring-white/5 backdrop-blur">
-        <div className="flex flex-col gap-6">
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-2xl shadow-black/10 dark:shadow-black/40">
+        <div className="flex flex-col gap-5">
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-xl border border-white/5 bg-white/5 p-4 shadow-inner shadow-black/20 backdrop-blur-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Registration</p>
-              <div className="mt-3 flex items-center gap-2">
+            <div className={sectionBaseClasses}>
+              <p className={labelClasses}>Registration</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Badge
                   variant="secondary"
-                  className={`border px-3 py-1 text-sm font-semibold ${
+                  className={`px-3 py-1 text-sm font-semibold ${
                     summary.registered
-                      ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/40"
-                      : "bg-amber-500/15 text-amber-200 border-amber-500/40"
+                      ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/40"
+                      : "bg-amber-500/10 text-amber-200 border border-amber-500/40"
                   }`}
                 >
                   {summary.registered ? "Registered" : "Not registered"}
                 </Badge>
                 <span className="text-xs text-muted-foreground">
-                  {summary.registered ? "Eligible for reward claims" : "Complete registration to unlock rewards"}
+                  {summary.registered ? "Eligible for reward claims" : "Finish registration to unlock drops."}
                 </span>
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/5 bg-white/5 p-4 shadow-inner shadow-black/20 backdrop-blur-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Role</p>
+            <div className={sectionBaseClasses}>
+              <p className={labelClasses}>Role</p>
               <div className="mt-3">
                 <RoleBadges roles={displayRoles} />
               </div>
@@ -197,19 +199,19 @@ const WalletSummaryGrid = React.memo(
               </p>
             </div>
 
-            <div className="rounded-xl border border-white/5 bg-white/5 p-4 shadow-inner shadow-black/20 backdrop-blur-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total airdrop allocation</p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight text-white">
+            <div className={sectionBaseClasses}>
+              <p className={labelClasses}>Total airdrop allocation</p>
+              <p className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
                 {typeof totalAirdrop === "number" && totalAirdrop > 0 ? formatNumber(totalAirdrop) : "Unavailable"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {totalAirdrop ? "Aggregate cap across all cohorts" : "Connect your wallet to view allocation details."}
+                {totalAirdrop ? "Aggregate cap across cohorts." : "Connect your wallet to view allocation details."}
               </p>
               {allocationEntries.length > 0 && (
                 <div className="mt-4 space-y-3">
                   {allocationEntries.map((entry) => (
                     <div key={entry.role}>
-                      <div className="flex items-center justify-between text-xs text-white/80">
+                      <div className="flex items-center justify-between text-xs text-foreground/80">
                         <span className="font-medium">{entry.label}</span>
                         <span className="tabular-nums">
                           {formatNumber(entry.amount)}
@@ -218,7 +220,7 @@ const WalletSummaryGrid = React.memo(
                           )}
                         </span>
                       </div>
-                      <div className="mt-1 h-1.5 rounded-full bg-white/10">
+                      <div className="mt-1 h-1.5 rounded-full bg-border/40">
                         <div
                           className={`h-full rounded-full ${ALLOCATION_ACCENTS[entry.role]}`}
                           style={{ width: `${Math.min(entry.percent ?? 0, 100)}%` }}
@@ -233,13 +235,10 @@ const WalletSummaryGrid = React.memo(
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {balanceCards.map((card) => (
-              <div
-                key={card.label}
-                className={`rounded-xl border border-white/5 bg-linear-to-br p-4 shadow-lg shadow-black/20 ${card.bg}`}
-              >
-                <p className="text-xs font-semibold uppercase tracking-wide text-white/70">{card.label}</p>
-                <p className={`mt-2 text-2xl font-semibold tabular-nums ${card.text}`}>{formatNumber(card.value)}</p>
-                <p className="text-xs text-white/60">Live snapshot</p>
+              <div key={card.label} className={statCardClasses}>
+                <p className={labelClasses}>{card.label}</p>
+                <p className={`mt-2 text-2xl font-semibold tabular-nums ${card.valueClass}`}>{formatNumber(card.value)}</p>
+                <p className="text-xs text-muted-foreground">Live snapshot</p>
               </div>
             ))}
           </div>

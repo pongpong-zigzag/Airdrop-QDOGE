@@ -1,5 +1,32 @@
 import { Res, User, TransactionRequest } from "./types";
 
+export type AirdropAllocations = {
+  community?: number;
+  portal?: number;
+  power?: number;
+  trader?: number;
+};
+
+export type AppConfig = {
+  total_QDOGE_supply?: number;
+  allocations?: AirdropAllocations;
+  rules?: {
+    registration_fee_qu?: number;
+    qubic_cap?: number;
+    portal_total_supply?: number;
+  };
+  addresses?: {
+    registration?: string;
+    burn?: string;
+  };
+  tradein?: {
+    qx_contract_id?: string;
+    qxmr_issuer_id?: string;
+    tradein_ratio_qdoge_per_qxmr?: number;
+    tradein_pool?: number;
+  };
+};
+
 export type WalletSummary = {
   wallet_id: string;
   registered: boolean;
@@ -51,6 +78,13 @@ export async function getUser(walletId: string, options?: SummaryOptions): Promi
     role: roles[0] ?? summary.role ?? "community",
     roles,
   } as User;
+}
+
+export async function getAppConfig(): Promise<AppConfig> {
+  const res = await fetch(`${BASE_URL}/v1/config`, { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { detail?: string })?.detail || "Failed to fetch config");
+  return data as AppConfig;
 }
 
 export async function confirmRegistration(walletId: string, txId: string) {

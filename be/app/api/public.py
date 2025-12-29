@@ -9,81 +9,18 @@ from app.api.models import ConfirmTxRequest, TxLogRequest
 from app.core.config import get_settings
 from app.core.db import conn_ctx
 from app.core.qubic import asset_name_value, identity_to_public_key_bytes, normalize_identity
+from app.core.roles import format_roles, parse_roles, resolve_roles
 from app.core.security import require_admin
 from app.services.airdrop import airdrop_breakdown_for_wallet, airdrop_for_wallet, recompute_and_store
 from app.services.assets import fetch_asset_units, fetch_portal_amount, fetch_qearn_amount, fetch_qxmr_amount
 from app.services.rpc import QubicRpcClient, RpcError
+from app.services.storage import ensure_user, set_user_role, update_airdrop_amount, upsert_res_snapshot
 
 router = APIRouter()
 
 # Cache window for wallet summary snapshots. Keep short to reduce staleness on UI.
 CACHE_TTL_SECONDS = 30  # seconds
 
-# Role helpers
-ROLE_ORDER = ["admin", "power", "portal", "community"]
-
-
-def _normalize_roles(raw_roles) -> list[str]:
-    """Normalize to a de-duplicated, ordered role list."""
-    seen = []
-    for r in raw_roles or []:
-        r_norm = str(r or "").strip().lower()
-        if not r_norm or r_norm in seen:
-            continue
-        seen.append(r_norm)
-    if "admin" in seen:
-        return ["admin"]
-    # apply deterministic ordering
-    ordered = [r for r in ROLE_ORDER if r in seen]
-    extras = sorted([r for r in seen if r not in ROLE_ORDER])
-    out = ordered + extras
-    if "community" not in out:
-        out.append("community")
-    return out or ["community"]
-
-
-def _parse_roles(role_field: str | None) -> list[str]:
-    if role_field is None or str(role_field).strip() == "":
-        return ["community"]
-    parts = str(role_field).split(",")
-    return _normalize_roles(parts)
-
-
-def _format_roles(roles: list[str]) -> str:
-    return ",".join(_normalize_roles(roles))
-
-
-def _ensure_user(conn, wallet: str, settings) -> None:
-    """Ensure users row exists; admins are always role=admin, access_info=1."""
-    if wallet == settings.admin_wallet_id:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO users(wallet_id, role, access_info)
-            VALUES (?, 'admin', 1)
-            """,
-            (wallet,),
-        )
-        conn.execute(
-            "UPDATE users SET role='admin', access_info=1, updated_at=datetime('now') WHERE wallet_id = ?",
-            (wallet,),
-        )
-    else:
-        conn.execute(
-            "INSERT OR IGNORE INTO users(wallet_id, role, access_info) VALUES (?, 'community', 0)",
-            (wallet,),
-        )
-
-
-def _resolve_roles(*, wallet: str, settings, portal_bal: int) -> list[str]:
-    """Default role is community; add portal/power when eligible. Admin is exclusive."""
-    if getattr(settings, "admin_wallet_id", "") and wallet == settings.admin_wallet_id:
-        return ["admin"]
-    roles: list[str] = ["community"]
-    if int(portal_bal) > 0:
-        roles.append("portal")
-    if wallet in settings.power_users:
-        roles.append("power")
-    return _normalize_roles(roles)
 
 
 @router.get("/v1/config")
@@ -152,13 +89,13 @@ async def wallet_summary(wallet_id: str, fresh: bool = False):
                     age = CACHE_TTL_SECONDS + 1
                 if age <= CACHE_TTL_SECONDS:
                     registered = bool(cached["access_info"] == 1)
-                    roles = _parse_roles(cached["role"])
+                    roles = parse_roles(cached["role"])
                     qubic_bal_raw = int(cached["qubic_bal"] or 0)
                     return {
                         "wallet_id": wallet,
                         "registered": registered,
-                        "role": _format_roles(roles),
-                        "roles": roles,
+                        "role": format_roles(roles),
+                        "roles": list(roles),
                         "balances": {
                             "qubic_bal": qubic_bal_raw,
                             "qubic_bal_capped": min(max(0, qubic_bal_raw), int(settings.qubic_cap)),
@@ -192,47 +129,36 @@ async def wallet_summary(wallet_id: str, fresh: bool = False):
 
     qubic_bal_raw = int(max(0, int(qubic_bal_raw)))
     qubic_bal_capped = int(min(qubic_bal_raw, int(settings.qubic_cap)))
-    roles = _resolve_roles(wallet=wallet, settings=settings, portal_bal=int(portal_bal))
-    roles_csv = _format_roles(roles)
+    roles = resolve_roles(wallet_id=wallet, settings=settings, portal_bal=int(portal_bal))
+    roles_csv = format_roles(roles)
 
     with conn_ctx() as conn:
-        _ensure_user(conn, wallet, settings)
+        changed = ensure_user(conn, wallet, settings)
         u = conn.execute("SELECT access_info FROM users WHERE wallet_id = ?", (wallet,)).fetchone()
         registered = bool(u and int(u[0] or 0) == 1)
 
-        # persist latest snapshot
-        conn.execute(
-            "UPDATE users SET role = ?, updated_at = datetime('now') WHERE wallet_id = ?",
-            (roles_csv, wallet),
-        )
-        conn.execute(
-            """
-            INSERT INTO res(wallet_id, qubic_bal, qearn_bal, portal_bal, qxmr_bal, updated_at)
-            VALUES(?, ?, ?, ?, ?, datetime('now'))
-            ON CONFLICT(wallet_id) DO UPDATE SET
-              qubic_bal=excluded.qubic_bal,
-              qearn_bal=excluded.qearn_bal,
-              portal_bal=excluded.portal_bal,
-              qxmr_bal=excluded.qxmr_bal,
-              updated_at=datetime('now')
-            """,
-            (wallet, qubic_bal_raw, int(qearn_bal), int(portal_bal), int(qxmr_bal)),
+        changed |= set_user_role(conn, wallet, roles_csv)
+        changed |= upsert_res_snapshot(
+            conn,
+            wallet,
+            qubic_bal=qubic_bal_raw,
+            qearn_bal=int(qearn_bal),
+            portal_bal=int(portal_bal),
+            qxmr_bal=int(qxmr_bal),
         )
 
-        # compute estimate based on current DB snapshots (registered wallets only)
         breakdown = airdrop_breakdown_for_wallet(conn, wallet, settings) if registered else {"community": 0, "portal": 0, "power": 0}
         est = int(sum(breakdown.values())) if registered else 0
-        conn.execute(
-            "UPDATE res SET airdrop_amt=?, updated_at=datetime('now') WHERE wallet_id = ?",
-            (est, wallet),
-        )
-        conn.commit()
+        changed |= update_airdrop_amount(conn, wallet, est)
+
+        if changed:
+            conn.commit()
 
     return {
         "wallet_id": wallet,
         "registered": registered,
         "role": roles_csv,
-        "roles": roles,
+        "roles": list(roles),
         "balances": {
             "qubic_bal": qubic_bal_raw,
             "qubic_bal_capped": qubic_bal_capped,
@@ -276,7 +202,7 @@ async def confirm_registration(req: ConfirmTxRequest):
         )
 
     with conn_ctx() as conn:
-        _ensure_user(conn, wallet, settings)
+        ensure_user(conn, wallet, settings)
         u = conn.execute("SELECT access_info FROM users WHERE wallet_id = ?", (wallet,)).fetchone()
         if u is not None and int(u[0] or 0) == 1:
             raise HTTPException(status_code=409, detail="wallet already registered")
@@ -362,7 +288,7 @@ async def confirm_tradein(req: ConfirmTxRequest):
     qdoge_amount = shares // int(settings.tradein_ratio_qdoge_per_qxmr)
 
     with conn_ctx() as conn:
-        _ensure_user(conn, wallet, settings)
+        ensure_user(conn, wallet, settings)
 
         total_tradein = conn.execute("SELECT COALESCE(SUM(qdoge_amount),0) FROM tradeins").fetchone()[0]
         total_tradein = int(total_tradein or 0)
@@ -401,7 +327,7 @@ def log_transaction(req: TxLogRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid type")
 
     with conn_ctx() as conn:
-        _ensure_user(conn, wallet_id, get_settings())
+        ensure_user(conn, wallet_id, get_settings())
         conn.execute(
             """
             INSERT OR IGNORE INTO transaction_log(wallet_id, "from", "to", txId, type, amount)

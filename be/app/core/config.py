@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -190,15 +191,25 @@ def get_settings() -> Settings:
 
     admin_api_key = _env_str("ADMIN_API_KEY", "access_admin_api_key")
     admin_wallet_raw = _env_str(
-        "ADMIN_WALLET_ID", "KZFJRTYKJXVNPAYXQXUKMPKAHWWBWVWGLSFMEFOKPFJFWEDDXMCZVSPEOOZE, ILNJXVHAUXDGGBTTUOITOQGPAYUCFTNCPXDKOCPUOCDOTPUWXBIGRVQDLIKC, QDOGEEESKYPAICECHEAHOXPULEOADTKGEJHAVYPFKHLEWGXXZQUGIGMBUTZE, QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB"
+        "ADMIN_WALLET_ID",
+        "KZFJRTYKJXVNPAYXQXUKMPKAHWWBWVWGLSFMEFOKPFJFWEDDXMCZVSPEOOZE, ILNJXVHAUXDGGBTTUOITOQGPAYUCFTNCPXDKOCPUOCDOTPUWXBIGRVQDLIKC, QDOGEEESKYPAICECHEAHOXPULEOADTKGEJHAVYPFKHLEWGXXZQUGIGMBUTZE, QXMRTKAIIGLUREPIQPCMHCKWSIPDTUYFCFNYXQLTECSUJVYEMMDELBMDOEYB",
     )
 
     # power users from config.py
     from app.core.qubic import normalize_identity
 
-    try:
-        admin_wallet_id = normalize_identity(admin_wallet_raw)
-    except Exception:
+    admin_wallet_id = ""
+    raw_candidates = [admin_wallet_raw]
+    if any(sep in admin_wallet_raw for sep in {",", " "}):
+        parts = re.split(r"[,\s]+", admin_wallet_raw)
+        raw_candidates = [part for part in (p.strip() for p in parts) if part]
+    for candidate in raw_candidates:
+        try:
+            admin_wallet_id = normalize_identity(candidate)
+            break
+        except Exception:
+            continue
+    if not admin_wallet_id:
         admin_wallet_id = admin_wallet_raw.strip().upper()
 
     power_users: set[str] = set()

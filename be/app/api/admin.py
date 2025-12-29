@@ -4,31 +4,11 @@ from fastapi import APIRouter, Depends
 
 from app.core.config import get_settings
 from app.core.db import conn_ctx
+from app.core.roles import format_roles, parse_roles
 from app.core.security import require_admin
 from app.services.airdrop import compute_allocations, recompute_and_store
 
 router = APIRouter(prefix="/v1/admin", dependencies=[Depends(require_admin)])
-
-ROLE_ORDER = ["admin", "power", "portal", "community"]
-
-
-def _parse_roles(role_field: str | None) -> list[str]:
-    if role_field is None or str(role_field).strip() == "":
-        return ["community"]
-    parts = [p.strip().lower() for p in str(role_field).split(",") if p.strip()]
-    if "admin" in parts:
-        return ["admin"]
-    ordered = [r for r in ROLE_ORDER if r in parts]
-    extras = sorted([r for r in parts if r not in ROLE_ORDER])
-    out = ordered + extras
-    if "community" not in out:
-        out.append("community")
-    return out or ["community"]
-
-
-def _format_roles(role_field: str | None) -> str:
-    return ",".join(_parse_roles(role_field))
-
 
 @router.get("/users")
 def list_users():
@@ -37,19 +17,20 @@ def list_users():
         rows = conn.execute(
             "SELECT wallet_id, role, access_info, created_at, updated_at FROM users ORDER BY created_at DESC"
         ).fetchall()
-    return {
-        "users": [
+    users = []
+    for r in rows:
+        roles = parse_roles(r[1])
+        users.append(
             {
                 "wallet_id": str(r[0]).upper(),
-                "role": _format_roles(r[1]),
-                "roles": _parse_roles(r[1]),
+                "role": format_roles(roles),
+                "roles": list(roles),
                 "access_info": int(r[2] or 0),
                 "created_at": r[3],
                 "updated_at": r[4],
             }
-            for r in rows
-        ]
-    }
+        )
+    return {"users": users}
 
 
 @router.get("/res")
@@ -73,7 +54,7 @@ def list_res():
     out = []
     for idx, r in enumerate(rows, start=1):
         wallet_id = str(r[0]).upper()
-        roles = _parse_roles(r[1])
+        roles = parse_roles(r[1])
         community_amt = amt(wallet_id, "community")
         portal_amt = amt(wallet_id, "portal")
         power_amt = amt(wallet_id, "power")
@@ -82,8 +63,8 @@ def list_res():
             {
                 "no": idx,
                 "wallet_id": wallet_id,
-                "role": _format_roles(roles),
-                "roles": roles,
+                "role": format_roles(roles),
+                "roles": list(roles),
                 "qubic_bal": int(r[2] or 0),
                 "qearn_bal": int(r[3] or 0),
                 "portal_bal": int(r[4] or 0),

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import dataclass
-from typing import Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, Tuple
 
 from app.core.config import Settings, get_settings
+from app.core.roles import resolve_roles
+from app.services.storage import update_airdrop_amount
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,38 @@ class WalletSnapshot:
     qearn_bal: int
     portal_bal: int
     qxmr_bal: int
+
+
+_ALLOC_CACHE_LOCK = threading.Lock()
+_ALLOC_CACHE: dict[str, Any] = {"version": None, "settings": None, "value": None}
+
+
+def _settings_signature(settings: Settings) -> tuple[Any, ...]:
+    return (
+        int(settings.community_pool),
+        int(settings.portal_pool),
+        int(settings.power_pool),
+        int(settings.portal_total_supply),
+        int(settings.qubic_cap),
+        tuple(sorted(settings.power_users)),
+    )
+
+
+def _allocation_version(conn: sqlite3.Connection) -> tuple[Any, ...]:
+    users_meta = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM users WHERE access_info = 1"
+    ).fetchone()
+    res_meta = conn.execute("SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM res").fetchone()
+    return (
+        int(users_meta[0] or 0),
+        str(users_meta[1] or ""),
+        int(res_meta[0] or 0),
+        str(res_meta[1] or ""),
+    )
+
+
+def _clone_allocations(data: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
+    return {role: dict(wallets) for role, wallets in data.items()}
 
 
 def _alloc_proportional(pool: int, weights: Dict[str, int]) -> Dict[str, int]:
@@ -49,31 +84,8 @@ def _alloc_proportional(pool: int, weights: Dict[str, int]) -> Dict[str, int]:
     remainders.sort(key=lambda x: (-x[0], x[1]))
     for i in range(remaining):
         floors[remainders[i % len(remainders)][1]] += 1
+
     return floors
-
-
-def _derive_roles(*, wallet_id: str, portal_bal: int, settings: Settings) -> tuple[str, ...]:
-    # Admin is exclusive: cannot have other roles or receive airdrops.
-    if wallet_id == settings.admin_wallet_id:
-        return ("admin",)
-
-    roles: list[str] = ["community"]
-    if int(portal_bal) > 0:
-        roles.append("portal")
-    if wallet_id in settings.power_users:
-        roles.append("power")
-
-    order = ["admin", "power", "portal", "community"]
-    deduped = []
-    for r in roles:
-        r_norm = str(r or "").strip().lower()
-        if not r_norm or r_norm in deduped:
-            continue
-        deduped.append(r_norm)
-    ordered = [r for r in order if r in deduped]
-    extras = sorted([r for r in deduped if r not in order])
-    final = tuple(ordered + extras)
-    return final if final else ("community",)
 
 
 def _fetch_registered_snapshots(conn: sqlite3.Connection, settings: Settings) -> list[WalletSnapshot]:
@@ -100,7 +112,7 @@ def _fetch_registered_snapshots(conn: sqlite3.Connection, settings: Settings) ->
         out.append(
             WalletSnapshot(
                 wallet_id=wallet_id,
-                roles=_derive_roles(wallet_id=wallet_id, portal_bal=portal_bal, settings=settings),
+                roles=resolve_roles(wallet_id=wallet_id, settings=settings, portal_bal=portal_bal),
                 qubic_bal=int(r["qubic_bal"] or 0),
                 qearn_bal=int(r["qearn_bal"] or 0),
                 portal_bal=portal_bal,
@@ -110,7 +122,7 @@ def _fetch_registered_snapshots(conn: sqlite3.Connection, settings: Settings) ->
     return out
 
 
-def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = None) -> dict[str, dict[str, int]]:
+def _compute_allocations_internal(conn: sqlite3.Connection, settings: Settings) -> dict[str, dict[str, int]]:
     """Compute airdrop allocation maps per role.
 
     Roles:
@@ -121,7 +133,6 @@ def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = No
     Note: portal pool uses the fixed denominator (portal_total_supply) per spec.
     This can leave some tokens undistributed if not all portal units are held by registered users.
     """
-    settings = settings or get_settings()
     snaps = _fetch_registered_snapshots(conn, settings)
 
     community_weights: Dict[str, int] = {}
@@ -150,6 +161,29 @@ def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = No
         portal_alloc[wallet] = int((pool * bal_i) // denom)
 
     return {"community": community_alloc, "power": power_alloc, "portal": portal_alloc}
+
+
+def compute_allocations(conn: sqlite3.Connection, settings: Settings | None = None) -> dict[str, dict[str, int]]:
+    settings = settings or get_settings()
+    version_before = _allocation_version(conn)
+    settings_sig = _settings_signature(settings)
+
+    with _ALLOC_CACHE_LOCK:
+        cached = _ALLOC_CACHE
+        if cached["version"] == version_before and cached["settings"] == settings_sig and cached["value"] is not None:
+            return _clone_allocations(cached["value"])
+
+    allocs = _compute_allocations_internal(conn, settings)
+    version_after = _allocation_version(conn)
+    if version_before != version_after:
+        return allocs
+
+    allocs_copy = _clone_allocations(allocs)
+    with _ALLOC_CACHE_LOCK:
+        _ALLOC_CACHE["version"] = version_after
+        _ALLOC_CACHE["settings"] = settings_sig
+        _ALLOC_CACHE["value"] = allocs_copy
+    return _clone_allocations(allocs_copy)
 
 
 def airdrop_for_wallet(conn: sqlite3.Connection, wallet_id: str, settings: Settings | None = None) -> int:
@@ -189,10 +223,4 @@ def recompute_and_store(conn: sqlite3.Connection, settings: Settings | None = No
                 + allocs.get("power", {}).get(wallet, 0)
                 + allocs.get("portal", {}).get(wallet, 0)
             )
-            conn.execute(
-                """
-                INSERT INTO res(wallet_id, airdrop_amt) VALUES(?, ?)
-                ON CONFLICT(wallet_id) DO UPDATE SET airdrop_amt=excluded.airdrop_amt, updated_at=datetime('now')
-                """,
-                (wallet, amt),
-            )
+            update_airdrop_amount(conn, wallet, amt)

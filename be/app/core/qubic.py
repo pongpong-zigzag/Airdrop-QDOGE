@@ -1,7 +1,9 @@
 import re
 
 
-_ID_RE = re.compile(r"^[A-Z]{60}$")
+# Qubic identities are typically 60 uppercase A–Z characters.
+# Some deployments use extended 66-character identities; accept both.
+_ID_RE = re.compile(r'^(?:[A-Z]{60}|[A-Z]{66})$')
 
 
 def normalize_identity(identity: str) -> str:

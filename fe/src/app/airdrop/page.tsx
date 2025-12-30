@@ -1,220 +1,472 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { CopyPlus } from "lucide-react";
-import { useUser } from "@/contexts/UserContext";
-import { PayModal } from "./PayModal";
-import { Button } from "@/components/ui/button";
-import { Res } from "@/lib/types";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getAdminAirdropRes, getAirdropRows, getWalletSummary, recordTransaction } from "@/lib/api";
-import TxPay from "./txpay";
-import { Card } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useQubicConnect } from "@/components/connect/QubicConnectContext";
-import { broadcastTx } from "@/services/rpc.service";
-import { createAssetTx } from "@/lib/transfer";
 import toast from "react-hot-toast";
-import { fetchOwnedAssets } from "@/services/rpc.service";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+import { useUser } from "@/contexts/UserContext";
+import { useQubicConnect } from "@/components/connect/QubicConnectContext";
+import { fetchOwnedAssets, broadcastTx } from "@/services/rpc.service";
+import { createAssetTx } from "@/lib/transfer";
 import { OwnedAssetSnapshot } from "@/types/user.types";
+
+import { getAdminAirdropRes, getAppConfig, getWalletSummary, recordTransaction, summaryToRes } from "@/lib/api";
+import type { WalletSummary, AppConfig, AirdropAllocations } from "@/lib/api";
+import { Res } from "@/lib/types";
 import { useAtom } from "jotai";
 import { settingsAtom } from "@/store/settings";
 
-type TabKey = "community" | "portal" | "poweruser";
-type RoleKey = "user" | "portal" | "power";
+import TxPay from "./txpay";
+import { RegisterModal } from "./RegisterModal";
 
-const TAB_CONFIG: Array<{ key: TabKey; label: string; role: RoleKey; emptyMessage: string }> = [
-  { key: "community", label: "For Communities", role: "user", emptyMessage: "No community records found." },
-  { key: "portal", label: "For Portal Holders", role: "portal", emptyMessage: "No portal holder records found." },
-  { key: "poweruser", label: "For PowerPlayers", role: "power", emptyMessage: "No poweruser records found." },
-];
+type RoleKey = "community" | "portal" | "power";
+type TabKey = "All" | RoleKey;
+type DisplayRole = RoleKey | "admin";
 
-const normalizeRole = (role?: string): RoleKey => {
-  const normalized = role?.toLowerCase();
-  if (normalized === "portal" || normalized === "power") return normalized;
-  return "user";
+const DISPLAY_ROLE_ORDER: DisplayRole[] = ["admin", "power", "portal", "community"];
+
+const ROLE_META: Record<DisplayRole, { label: string; className: string }> = {
+  admin: { label: "Admin", className: "bg-amber-50 text-amber-800 border-amber-200" },
+  power: { label: "Power", className: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  portal: { label: "Portal", className: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  community: { label: "Community", className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
 };
 
-const isAdminRole = (role?: string): boolean => role?.trim().toLowerCase() === "admin";
+const ALLOCATION_ACCENTS: Record<RoleKey, string> = {
+  community: "bg-primary",
+  portal: "bg-secondary",
+  power: "bg-accent",
+};
 
-const Airdrop: React.FC = () => {
-  const [loading, setLoading] = useState(true);
+const formatNumber = (value?: number | string | null) => {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return "0";
+  return num.toLocaleString("en-US");
+};
+
+const resolveRawRoles = (roles?: string[] | string): string[] => {
+  if (Array.isArray(roles)) {
+    return roles;
+  }
+  if (typeof roles === "string") {
+    return roles
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const normalizeRole = (role?: string): RoleKey => {
+  const r = (role ?? "").toLowerCase();
+  if (r === "power") return "power";
+  if (r === "portal") return "portal";
+  return "community";
+};
+
+const normalizeDisplayRole = (role?: string): DisplayRole | null => {
+  const r = (role ?? "").trim().toLowerCase();
+  if (!r) return null;
+  if (r === "admin") return "admin";
+  return normalizeRole(r) as DisplayRole;
+};
+
+const getDisplayRoles = (roles?: string[] | string): DisplayRole[] => {
+  const normalized = resolveRawRoles(roles)
+    .map((r) => normalizeDisplayRole(r))
+    .filter(Boolean) as DisplayRole[];
+
+  const deduped = Array.from(new Set(normalized)).sort(
+    (a, b) => DISPLAY_ROLE_ORDER.indexOf(a) - DISPLAY_ROLE_ORDER.indexOf(b),
+  );
+
+  return deduped.length > 0 ? deduped : ["community"];
+};
+
+const extractRoles = (res: Res): TabKey[] => {
+  return getDisplayRoles(res.roles ?? res.role).filter((r) => r !== "admin") as TabKey[];
+};
+
+const RoleBadges = React.memo(({ roles }: { roles: DisplayRole[] }) => (
+  <div className="flex flex-wrap gap-1">
+    {roles.map((role) => {
+      const meta = ROLE_META[role] ?? ROLE_META.community;
+      return (
+        <Badge
+          key={role}
+          variant="secondary"
+          className={`border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${meta.className}`}
+        >
+          {meta.label}
+        </Badge>
+      );
+    })}
+  </div>
+));
+RoleBadges.displayName = "RoleBadges";
+
+const WalletSummaryGrid = React.memo(
+  ({
+    summary,
+    totalAirdrop,
+    allocations,
+  }: {
+    summary: WalletSummary;
+    totalAirdrop?: number | null;
+    allocations?: AirdropAllocations | null;
+  }) => {
+    const displayRoles = getDisplayRoles(summary.roles ?? summary.role);
+    const allocationEntries = (["community", "portal", "power"] as RoleKey[])
+      .map((role) => {
+        const amount = Number(allocations?.[role] ?? 0);
+        if (!amount) return null;
+        const percent = totalAirdrop ? (amount / totalAirdrop) * 100 : null;
+        return {
+          role,
+          label: ROLE_META[role].label,
+          amount,
+          percent,
+        };
+      })
+      .filter(Boolean) as { role: RoleKey; label: string; amount: number; percent: number | null }[];
+
+    const sectionBaseClasses =
+      "rounded-xl border border-border bg-card p-4 shadow-inner shadow-black/5 dark:shadow-black/30";
+    const statCardClasses =
+      "rounded-xl border border-border bg-card p-4 shadow-lg shadow-black/5 dark:shadow-black/30";
+    const labelClasses = "text-xs font-semibold uppercase tracking-wide text-muted-foreground";
+
+    const balanceCards = [
+      {
+        label: "QEARN",
+        value: summary?.balances?.qearn_bal,
+        valueClass: "text-text-secondary",
+      },
+      {
+        label: "QUBIC",
+        value: summary?.balances?.qubic_bal,
+        valueClass: "text-primary",
+      },
+      {
+        label: "PORTAL",
+        value: summary?.balances?.portal_bal,
+        valueClass: "text-accent-foreground",
+      },
+      {
+        label: "QXMR",
+        value: summary?.balances?.qxmr_bal,
+        valueClass: "text-muted-foreground",
+      },
+    ];
+    const [qearnCard, qubicCard, portalCard, qxmrCard] = balanceCards;
+    const renderBalanceCard = (card?: (typeof balanceCards)[number]) =>
+      card ? (
+        <div className={statCardClasses}>
+          <p className={labelClasses}>{card.label}</p>
+          <p className={`mt-2 text-2xl font-semibold tabular-nums ${card.valueClass}`}>
+            {formatNumber(card.value)}
+          </p>
+          <p className="text-xs text-muted-foreground">Live snapshot</p>
+        </div>
+      ) : null;
+
+    return (
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-2xl shadow-black/10 dark:shadow-black/40">
+        <div className="flex flex-col gap-5">
+          <div className="grid gap-4 lg:grid-rows-1 lg:grid-flow-col">
+            <div className="space-y-4 lg:col-span-3">
+              <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-3">
+                <div className={sectionBaseClasses}>
+                  <p className={labelClasses}>Registration</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="secondary"
+                      className={`px-3 py-1 text-sm font-semibold ${
+                        summary.registered
+                          ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/40"
+                          : "bg-amber-500/10 text-amber-200 border border-amber-500/40"
+                      }`}
+                    >
+                      {summary.registered ? "Registered" : "Not registered"}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {summary.registered ? "Eligible for reward claims" : "Finish registration to unlock drops."}
+                    </span>
+                  </div>
+                </div>
+
+                <div className={sectionBaseClasses}>
+                  <p className={labelClasses}>Role</p>
+                  <div className="mt-3">
+                    <RoleBadges roles={displayRoles} />
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    {displayRoles.length > 1
+                      ? "Multi-tier access boosts your allocation."
+                      : `You are currently in the ${ROLE_META[displayRoles[0]].label} tier.`}
+                  </p>
+                </div>
+
+                {renderBalanceCard(qubicCard)}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-3">
+                {renderBalanceCard(qearnCard)}
+                {renderBalanceCard(portalCard)}
+                {renderBalanceCard(qxmrCard)}
+              </div>
+            </div>
+
+            <div className={`${sectionBaseClasses} lg:col-span-1`}>
+              <p className={labelClasses}>Total airdrop allocation</p>
+              <p className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
+                {typeof totalAirdrop === "number" && totalAirdrop > 0 ? formatNumber(totalAirdrop) : "Unavailable"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {totalAirdrop ? "Aggregate cap across cohorts." : "Connect your wallet to view allocation details."}
+              </p>
+              {allocationEntries.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  {allocationEntries.map((entry) => (
+                    <div key={entry.role}>
+                      <div className="flex items-center justify-between text-xs text-foreground/80">
+                        <span className="font-medium">{entry.label}</span>
+                        <span className="tabular-nums">
+                          {formatNumber(entry.amount)}
+                          {entry.percent !== null && (
+                            <span className="ml-1 text-muted-foreground">({entry.percent.toFixed(1)}%)</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1.5 rounded-full bg-border/40">
+                        <div
+                          className={`h-full rounded-full ${ALLOCATION_ACCENTS[entry.role]}`}
+                          style={{ width: `${Math.min(entry.percent ?? 0, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  },
+);
+WalletSummaryGrid.displayName = "WalletSummaryGrid";
+
+export default function AirdropPage() {
   const { user, error: userError } = useUser();
-  const [resTable, setResTable] = useState<Res[]>([]);
-  const [walletSummary, setWalletSummary] = useState<any | null>(null);
-  const [resError, setResError] = useState<string | null>(null);
-  const [visilbleFundModel, setVisibleFundModal] = useState(false);
   const { connected, wallet, getSignedTx } = useQubicConnect();
   const [settings] = useAtom(settingsAtom);
+
+  const [loading, setLoading] = useState(true);
+  const [resTable, setResTable] = useState<Res[]>([]);
+  const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showRegister, setShowRegister] = useState(false);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
 
   const connectedWalletId = useMemo(
     () => wallet?.publicKey?.trim().toUpperCase() ?? null,
     [wallet?.publicKey],
   );
 
-  const canSeeAll = useMemo(() => {
-    return isAdminRole(user?.role) && !!settings.adminApiKey?.trim();
-  }, [user?.role, settings.adminApiKey]);
+  const adminApiKey = useMemo(() => settings.adminApiKey?.trim() ?? "", [settings.adminApiKey]);
 
-  const sendQDOGE = async (walletId: string, amount: number) => {
-    if (!connected || !wallet) {
-      toast.error("Please connect your wallet first");
-      return;
-    }
-    if (((wallet.connectType ?? "").toLowerCase()) === "mmsnap") {
-      toast.error("MMSnap is not supported yet");
-      return;
-    }
-    if (!isAdminRole(user?.role)) {
-      toast.error("You are not authorized to send QDOGE");
-      return;
-    }
-    if (!amount || amount <= 0) {
-      toast.error("Amount must be greater than 0");
-      return;
-    }
+  const isAdmin = useMemo(() => {
+    const roles = resolveRawRoles(walletSummary?.roles ?? walletSummary?.role);
+    return roles.some((r) => r.toLowerCase() === "admin");
+  }, [walletSummary?.role, walletSummary?.roles]);
+  const canSeeAll = useMemo(
+    () => isAdmin && !!adminApiKey,
+    [isAdmin, adminApiKey],
+  );
+  const airdropAllocations = useMemo(() => appConfig?.allocations ?? null, [appConfig]);
+  const totalAirdrop = useMemo(() => {
+    if (!airdropAllocations) return null;
+    const community = Number(airdropAllocations.community ?? 0);
+    const portal = Number(airdropAllocations.portal ?? 0);
+    const power = Number(airdropAllocations.power ?? 0);
+    const total = community + portal + power;
+    return total > 0 ? total : null;
+  }, [airdropAllocations]);
 
-    try {
-      toast.loading("checking balance...", { id: "check-balance" });
-      const assets = await fetchOwnedAssets(wallet?.publicKey);
-      const qdogeAsset = await assets.find((asset: OwnedAssetSnapshot) => asset.asset === "QDOGE");
-      toast.dismiss("check-balance");
-
-      if (!qdogeAsset) {
-        toast.error("QDOGE not found in your assets", { duration: 1000 });
-        return;
-      }
-      if (qdogeAsset.amount < amount) {
-        toast.error("Insufficient balance");
-        return;
-      }
-
-      toast.success("Balance checked successfully");
-      toast.loading("sending QDOGE...", { id: "sending" });
-
-      const tx = await createAssetTx({
-        from: wallet.publicKey,
-        to: walletId,
-        amount: amount,
-      });
-
-      const signed = await getSignedTx(tx);
-      const signedTx: Uint8Array = signed.tx;
-
-      const broadcastResult = await broadcastTx(signedTx);
-      const txId = broadcastResult.transactionId;
-
-      await recordTransaction({
-        sender: wallet.publicKey,
-        recipient: walletId,
-        tx_hash: txId,
-      });
-
-      toast.dismiss("sending");
-      toast.success("QDOGE sent successfully");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to send QDOGE";
-      toast.error(message);
-    } finally {
-      toast.dismiss("sending");
-    }
-  };
-
-  const refreshResTable = async () => {
+  const refresh = React.useCallback(async () => {
     setLoading(true);
-    setResError(null);
+    setError(null);
     try {
-      if (canSeeAll) {
-        const result = await getAdminAirdropRes(settings.adminApiKey);
-        setResTable(result.res);
-      } else if (connectedWalletId) {
-        const result = await getAirdropRows(connectedWalletId);
-        setResTable(result.res ?? []);
+      let summary: WalletSummary | null = null;
+      if (connectedWalletId) {
+        summary = await getWalletSummary(connectedWalletId, { fresh: true });
+        setWalletSummary(summary);
+      } else {
+        setWalletSummary(null);
+      }
+
+      const isAdminRole = resolveRawRoles(summary?.roles ?? summary?.role).some(
+        (r) => r.toLowerCase() === "admin",
+      );
+      const adminKey = adminApiKey;
+
+      if (isAdminRole && adminKey) {
+        const data = await getAdminAirdropRes(adminKey);
+        setResTable(data.res ?? []);
+      } else if (summary) {
+        setResTable([summaryToRes(summary)]);
       } else {
         setResTable([]);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load airdrop results.";
-      setResError(message);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Failed to load airdrop data.";
+      setError(message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [connectedWalletId, adminApiKey]);
 
   useEffect(() => {
-    refreshResTable();
-  }, [connectedWalletId, canSeeAll, settings.adminApiKey]);
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
-    const run = async () => {
-      if (!connectedWalletId) {
-        setWalletSummary(null);
-        return;
-      }
-      try {
-        const summary = await getWalletSummary(connectedWalletId);
-        setWalletSummary(summary);
-      } catch {
-        setWalletSummary(null);
-      }
+    let cancelled = false;
+    getAppConfig()
+      .then((cfg) => {
+        if (!cancelled) setAppConfig(cfg);
+      })
+      .catch((err) => {
+        console.error("Failed to load config", err);
+      });
+    return () => {
+      cancelled = true;
     };
-    run();
-  }, [connectedWalletId]);
+  }, []);
 
-  const rowsByTab = useMemo<Record<TabKey, Res[]>>(() => {
-    const buckets: Record<TabKey, Res[]> = { community: [], portal: [], poweruser: [] };
-
-    resTable.forEach((entry) => {
-      if (isAdminRole(entry.role)) return;
-      const roleKey = normalizeRole(entry.role);
-      if (roleKey === "portal") buckets.portal.push(entry);
-      else if (roleKey === "power") buckets.poweruser.push(entry);
-      else buckets.community.push(entry);
-    });
-
+  const rowsByRole = useMemo(() => {
+    const buckets: Record<TabKey, Res[]> = { All: [], community: [], portal: [], power: [] };
+    for (const r of resTable) {
+      buckets.All.push(r);
+      const rawRoles = resolveRawRoles(r.roles ?? r.role).map((x) => x.toLowerCase());
+      if (rawRoles.includes("admin")) continue; // admin only shows in All
+      const roles = extractRoles(r);
+      for (const role of roles) buckets[role].push(r);
+    }
     return buckets;
   }, [resTable]);
 
-  const tableError = resError ?? userError ?? null;
+  const sortedRowsByRole = useMemo(() => {
+    const sorter = (rows: Res[]) => [...rows].sort((a, b) => (b.airdrop_amt ?? 0) - (a.airdrop_amt ?? 0));
+    return {
+      All: sorter(rowsByRole.All),
+      community: sorter(rowsByRole.community),
+      portal: sorter(rowsByRole.portal),
+      power: sorter(rowsByRole.power),
+    };
+  }, [rowsByRole]);
 
-  const isCurrentWallet = (walletId: string) => {
-    if (!connected || !connectedWalletId) return false;
-    return walletId.trim().toUpperCase() === connectedWalletId;
-  };
+  const sendQDOGE = React.useCallback(
+    async (destWallet: string, amount: number) => {
+      if (!connected || !wallet) {
+        toast.error("Please connect your wallet first");
+        return;
+      }
+      if (!canSeeAll) {
+        toast.error("Admin API key required");
+        return;
+      }
+      if (!amount || amount <= 0) {
+        toast.error("Amount must be greater than 0");
+        return;
+      }
 
-  const formatWalletLabel = (walletId: string) => {
-    if (isCurrentWallet(walletId)) return "YOU";
-    if (canSeeAll) return walletId;
-    return `${walletId.slice(0, 6)} ... ${walletId.slice(-6)}`;
-  };
+      try {
+        toast.loading("Checking QDOGE balance...", { id: "check" });
+        const assets = await fetchOwnedAssets(wallet.publicKey);
+        const qdogeAsset = assets.find((a: OwnedAssetSnapshot) => a.asset === "QDOGE");
+        toast.dismiss("check");
+        if (!qdogeAsset) {
+          toast.error("QDOGE not found in your assets");
+          return;
+        }
+        if (qdogeAsset.amount < amount) {
+          toast.error("Insufficient QDOGE balance");
+          return;
+        }
 
-  const renderTable = (rows: Res[], emptyMessage: string) => {
-    const showActions = canSeeAll; // only when admin actually has full dataset access
-    const colSpan = showActions ? 6 : 5;
+        toast.loading("Signing & broadcasting...", { id: "send" });
+        const tx = await createAssetTx({ from: wallet.publicKey, to: destWallet, amount });
+        const signed = await getSignedTx(tx);
+        const broadcastResult = await broadcastTx(signed.tx);
+        const txId = broadcastResult.transactionId;
 
+        await recordTransaction(adminApiKey, {
+          wallet_id: wallet.publicKey,
+          from_id: wallet.publicKey,
+          to_id: destWallet,
+          txId,
+          type: "qdoge",
+          amount,
+        });
+
+        toast.dismiss("send");
+        toast.success("QDOGE sent");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Failed to send QDOGE";
+        toast.dismiss("send");
+        toast.error(message);
+      }
+    },
+    [adminApiKey, canSeeAll, connected, getSignedTx, wallet],
+  );
+
+  const renderTable = (rows: Res[], showActions: boolean, view: TabKey) => {
+    const colSpanBase = 8; // No per-role columns
+    const colSpan = showActions ? colSpanBase + 1 : colSpanBase;
+    const roleAirdrop = (row: Res) => {
+      if (view === "community") return row.community_amt ?? 0;
+      if (view === "portal") return row.portal_amt ?? 0;
+      if (view === "power") return row.power_amt ?? 0;
+      return row.airdrop_amt;
+    };
     return (
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>No</TableHead>
             <TableHead>Wallet ID</TableHead>
-            <TableHead>Qearn Balance</TableHead>
-            <TableHead>Invest Balance</TableHead>
+            <TableHead>Roles</TableHead>
+            <TableHead>QUBIC</TableHead>
+            <TableHead>QEARN</TableHead>
+            <TableHead>PORTAL</TableHead>
+            <TableHead>QXMR</TableHead>
             <TableHead>Airdrop</TableHead>
             {showActions && <TableHead className="text-center">Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((res) => (
-            <TableRow key={`${res.role}-${res.no}`} className={isCurrentWallet(res.wallet_id) ? "font-semibold" : undefined}>
-              <TableCell>{res.no}</TableCell>
-              <TableCell>{formatWalletLabel(res.wallet_id)}</TableCell>
-              <TableCell>{res.qearn_bal}</TableCell>
-              <TableCell>{res.invest_bal}</TableCell>
-              <TableCell>{res.airdrop_amt}</TableCell>
+          {rows.map((r) => (
+            <TableRow key={`${r.wallet_id}-${r.no}`}>
+              <TableCell>{r.no}</TableCell>
+              <TableCell>{canSeeAll ? r.wallet_id : "YOU"}</TableCell>
+              <TableCell>
+                <RoleBadges roles={getDisplayRoles(r.roles ?? r.role)} />
+              </TableCell>
+              <TableCell>{formatNumber(r.qubic_bal)}</TableCell>
+              <TableCell>{formatNumber(r.qearn_bal)}</TableCell>
+              <TableCell>{formatNumber(r.portal_bal)}</TableCell>
+              <TableCell>{formatNumber(r.qxmr_bal)}</TableCell>
+              <TableCell>{formatNumber(roleAirdrop(r))}</TableCell>
               {showActions && (
                 <TableCell className="text-center">
-                  <Button size="sm" onClick={() => sendQDOGE(res.wallet_id, res.airdrop_amt)}>
+                  <Button size="sm" onClick={() => sendQDOGE(r.wallet_id, r.airdrop_amt)}>
                     Send QDOGE
                   </Button>
                 </TableCell>
@@ -230,18 +482,18 @@ const Airdrop: React.FC = () => {
             </TableRow>
           )}
 
-          {!loading && rows.length === 0 && !tableError && (
+          {!loading && rows.length === 0 && !error && (
             <TableRow>
               <TableCell colSpan={colSpan} className="text-center text-muted-foreground">
-                {emptyMessage}
+                No rows.
               </TableCell>
             </TableRow>
           )}
 
-          {tableError && (
+          {(error || userError) && (
             <TableRow>
               <TableCell colSpan={colSpan} className="text-center text-destructive">
-                Error: {tableError}
+                Error: {error || userError}
               </TableCell>
             </TableRow>
           )}
@@ -252,81 +504,54 @@ const Airdrop: React.FC = () => {
 
   return (
     <div className="container mx-auto min-h-screen px-4 py-2">
-      <div className="justify-end flex gap-2">
-        {user && (
-          <Button variant={"default"} size={"lg"} className="mt-2" onClick={() => setVisibleFundModal(true)}>
-            <CopyPlus size={20} />
-            {user.access_info === 0 ? "Register" : "Fund Qubic"}
+      <TxPay onPurchaseComplete={refresh} />
+
+      <div className="flex justify-end gap-2">
+        {user && user.access_info === 0 && (
+          <Button size="lg" className="mt-2" onClick={() => setShowRegister(true)}>
+            Register (1,000,000 QU)
           </Button>
         )}
       </div>
 
       <Card className="mx-auto w-full border-0 shadow-lg mt-2">
         {canSeeAll ? (
-          <Tabs defaultValue="community" className="h-full w-full">
+          <Tabs defaultValue="All" className="h-full w-full">
             <TabsList className="mb-2 flex w-full">
-              {TAB_CONFIG.map((tab) => (
-                <TabsTrigger key={tab.key} value={tab.key} className="flex-1">
-                  {tab.label}
-                </TabsTrigger>
-              ))}
+              <TabsTrigger value="All" className="flex-1">All</TabsTrigger>
+              <TabsTrigger value="community" className="flex-1">Community</TabsTrigger>
+              <TabsTrigger value="portal" className="flex-1">Portal</TabsTrigger>
+              <TabsTrigger value="power" className="flex-1">Power</TabsTrigger>
             </TabsList>
-
-            {TAB_CONFIG.map((tab) => (
-              <TabsContent
-                key={tab.key}
-                value={tab.key}
-                className="h-[calc(100%-40px)] overflow-auto scrollbar-thin scrollbar-track-gray-100 scrollbar-thumb-gray-700 dark:scrollbar-track-gray-800 dark:scrollbar-thumb-gray-600"
-              >
-                {renderTable(rowsByTab[tab.key], tab.emptyMessage)}
-              </TabsContent>
-            ))}
+            <TabsContent value="community" className="overflow-auto">
+              {renderTable(sortedRowsByRole.community, true, "community")}
+            </TabsContent>
+            <TabsContent value="portal" className="overflow-auto">
+              {renderTable(sortedRowsByRole.portal, true, "portal")}
+            </TabsContent>
+            <TabsContent value="power" className="overflow-auto">
+              {renderTable(sortedRowsByRole.power, true, "power")}
+            </TabsContent>
+            <TabsContent value="All" className="overflow-auto">
+              {renderTable(sortedRowsByRole.All, true, "All")}
+            </TabsContent>
           </Tabs>
         ) : (
           <div className="p-4 space-y-4">
             {!connectedWalletId && (
-              <div className="text-sm text-muted-foreground">Connect your wallet to view your airdrop status.</div>
+              <div className="text-sm text-muted-foreground">Connect your wallet to view your status.</div>
             )}
 
-            {connectedWalletId && (
-              <div className="rounded-md border p-3 text-sm">
-                You are viewing <span className="font-semibold">only your own</span> airdrop data.
-                {isAdminRole(user?.role) && !settings.adminApiKey?.trim() && (
-                  <>
-                    {" "}
-                    Add your <span className="font-semibold">Admin API Key</span> in Account → Settings to unlock the full table.
-                  </>
-                )}
-              </div>
+            {connectedWalletId && walletSummary && (
+              <WalletSummaryGrid summary={walletSummary} totalAirdrop={totalAirdrop} allocations={airdropAllocations} />
             )}
 
-            {walletSummary && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="rounded-md border p-3">
-                  <div className="text-xs text-muted-foreground">Registration</div>
-                  <div className="font-semibold">{walletSummary.registered ? "Registered" : "Not registered"}</div>
-                </div>
-                <div className="rounded-md border p-3">
-                  <div className="text-xs text-muted-foreground">Funded (credited)</div>
-                  <div className="font-semibold">{walletSummary.funded_qu ?? 0}</div>
-                </div>
-                <div className="rounded-md border p-3">
-                  <div className="text-xs text-muted-foreground">Estimated airdrop</div>
-                  <div className="font-semibold">{walletSummary?.airdrop?.total ?? 0}</div>
-                </div>
-              </div>
-            )}
-
-            {renderTable(resTable, "No airdrop rows found for this wallet yet.")}
+            {isAdmin && <div className="overflow-auto">{renderTable(sortedRowsByRole.All, false, "All")}</div>}
           </div>
         )}
       </Card>
 
-      <PayModal open={visilbleFundModel} onClose={() => setVisibleFundModal(false)} />
-
-      <TxPay onPurchaseComplete={() => refreshResTable()} />
+      <RegisterModal open={showRegister} onClose={() => setShowRegister(false)} />
     </div>
   );
-};
-
-export default Airdrop;
+}

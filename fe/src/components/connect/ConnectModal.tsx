@@ -357,6 +357,7 @@ const ConnectModal = ({ open, onClose, darkMode }: { open: boolean; onClose: () 
                     <div className="mt-5 flex flex-col gap-2">
                       <HeaderButtons
                         state={state}
+                        isWalletConnected={connected}
                         onConnectClick={() => {
                           mmSnapConnect();
                           handleClose();

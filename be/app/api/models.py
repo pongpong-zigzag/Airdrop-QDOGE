@@ -13,15 +13,9 @@ class ConfirmTxRequest(BaseModel):
 
 
 class TxLogRequest(BaseModel):
-    sender: str
-    recipient: str
-    tx_hash: str
-
-
-class ImportRow(BaseModel):
-    walletId: str
-    amount: int
-
-
-class ImportSnapshotRequest(BaseModel):
-    rows: list[ImportRow]
+    wallet_id: str
+    from_id: str
+    to_id: str
+    txId: str
+    type: str
+    amount: int = 0

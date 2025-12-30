@@ -9,7 +9,7 @@ import { toast } from "react-hot-toast";
 import { useQubicConnect } from "@/components/connect/QubicConnectContext";
 import { broadcastTx, fetchOwnedAssets } from "@/services/rpc.service";
 import { createAssetTransferTransaction } from "@/services/qx.service";
-import { confirmTradein, recordTransaction } from "@/lib/api";
+import { confirmTradein } from "@/lib/api";
 import { ownedAssetsAtom } from "@/store/assets";
 import { useAtom } from "jotai";
 
@@ -54,7 +54,7 @@ export default function TradeinPage() {
     return Number.isFinite(n) ? Math.floor(n) : 0;
   }, [amount]);
 
-  const expectedQdoge = useMemo(() => parsed / RATIO, [parsed]);
+  const expectedQdoge = useMemo(() => Math.floor(parsed / RATIO).toString(), [parsed]);
 
   const handleTradein = async () => {
     if (!isOpen) {
@@ -87,12 +87,10 @@ export default function TradeinPage() {
       toast.loading("Sign in your wallet...", { id: "tradein" });
 
       const signed = await getSignedTx(tx);
-      let signedTx: Uint8Array = signed.tx;
+      const signedTx: Uint8Array = signed.tx;
 
       const broadcastResult = await broadcastTx(signedTx);
       const txId = broadcastResult.transactionId;
-
-      await recordTransaction({ sender: wallet.publicKey, recipient: BURN_ADDRESS, tx_hash: txId });
 
       toast.loading("Confirming trade-in on-chain...", { id: "tradein" });
       const result = await confirmTradein(wallet.publicKey, txId);

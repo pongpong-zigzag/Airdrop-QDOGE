@@ -12,10 +12,11 @@ import { DEFAULT_TX_SIZE } from "@/constants";
 import { toast } from "react-hot-toast";
 import { getSnap } from "./utils/snap";
 import { connectSnap } from "./utils/snap";
-// @ts-ignore
+// @ts-expect-error: qubic vault library does not ship types
 import { QubicVault } from "@qubic-lib/qubic-ts-vault-library";
-import { useAtom } from "jotai";
-// import { balancesAtom } from "@/store/balances";
+
+
+const WALLET_STORAGE_KEY = "wallet";
 
 interface Wallet {
   connectType: string;
@@ -48,28 +49,54 @@ export function QubicConnectProvider({ children }: QubicConnectProviderProps) {
   const [connected, setConnected] = useState<boolean>(false);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [showConnectModal, setShowConnectModal] = useState<boolean>(false);
-  const { signTransaction } = useWalletConnect();
+  const { signTransaction, disconnect: disconnectWalletConnect } = useWalletConnect();
   const [state, dispatch] = useContext(MetaMaskContext);
   // const [, setBalances] = useAtom(balancesAtom);
 
   const qHelper = new QubicHelper();
 
   const connect = (wallet: Wallet): void => {
-    localStorage.setItem("wallet", JSON.stringify(wallet));
+    localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(wallet));
     setWallet(wallet);
     setConnected(true);
   };
 
   const disconnect = (): void => {
-    localStorage.removeItem("wallet");
+    const connectType = wallet?.connectType;
+    localStorage.removeItem(WALLET_STORAGE_KEY);
     setWallet(null);
     setConnected(false);
+    if (connectType === "walletconnect") {
+      disconnectWalletConnect().catch((error) =>
+        console.error("Failed to disconnect WalletConnect session", error),
+      );
+    }
     // setBalances([]);
   };
 
   const toggleConnectModal = (): void => {
     setShowConnectModal(!showConnectModal);
   };
+
+  // Hydrate persisted wallet on mount to avoid forcing a reconnection after refresh.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = localStorage.getItem(WALLET_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: Wallet = JSON.parse(raw);
+      if (!parsed?.publicKey || !connectTypes.includes(parsed.connectType)) {
+        localStorage.removeItem(WALLET_STORAGE_KEY);
+        return;
+      }
+      setWallet(parsed);
+      setConnected(true);
+    } catch (error) {
+      console.error("Failed to restore wallet from storage", error);
+      localStorage.removeItem(WALLET_STORAGE_KEY);
+    }
+  }, []);
 
   const getMetaMaskPublicId = async (accountIdx: number = 0, confirm: boolean = false): Promise<string> => {
     return await window.ethereum.request({
